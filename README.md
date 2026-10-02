@@ -5,6 +5,7 @@ An npm workspaces monorepo for Pi security extensions:
 | Package | Purpose |
 | --- | --- |
 | [`pi-auto-review`](packages/pi-auto-review) | Model-backed boundary approval broker and permission-system authorizer |
+| [`pi-reviewed-escalation`](packages/pi-reviewed-escalation) | Optional exact-command approval for host Bash execution |
 | [`pi-sandbox`](packages/pi-sandbox) | Anthropic Sandbox Runtime-backed Bash sandbox, with an optional process-backed subagent provider |
 
 The layout follows the package-per-directory structure used by

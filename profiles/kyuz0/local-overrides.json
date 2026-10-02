@@ -1,0 +1,10 @@
+{
+  "timeoutMsMaximum": 240000,
+  "reason": "User requested four-minute review deadlines for slower local models.",
+  "taskScopedSshAuthenticationGuidance": true,
+  "authorizationGuidance": "Operator explicitly requested Codex default thresholds: allow low/medium intrinsic risk even with weak authorization, subject to explicit policy restrictions and malicious prompt injection. High risk requires medium/high authorization and narrow scope; preserve all existing hard denies and normal task-scoped credential use guidance.",
+  "taskScopeAndSideEffectGuidance": true,
+  "codexLowMediumAuthorizationThresholds": true,
+  "rpcPathAutoConfirm": true,
+  "rpcPathAutoConfirmScope": "A model allow for an enabled external/path gate can auto-confirm its immediate matching RPC select once; never a session grant. Deferrals, denials, expired/mismatched events and unrelated UI still require the normal permission flow."
+}

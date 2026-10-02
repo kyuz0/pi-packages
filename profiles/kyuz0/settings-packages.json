@@ -1,0 +1,16 @@
+{
+  "packages": [
+    {
+      "source": "npm:pi-sandbox",
+      "autoload": false
+    },
+    "npm:@gotgenes/pi-permission-system",
+    {
+      "source": "npm:@erichll/pi-auto-review",
+      "autoload": false
+    },
+    "/home/kyuz0/.pi/agent/local-packages/pi-auto-review",
+    "/home/kyuz0/.pi/agent/local-packages/pi-reviewed-escalation",
+    "npm:@erichll/pi-sandbox"
+  ]
+}

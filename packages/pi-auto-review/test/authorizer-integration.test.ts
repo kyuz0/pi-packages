@@ -986,7 +986,7 @@ test("real permission-system authorizer chain integration", async (t) => {
       });
       const context = reviewerTranscript(instance.modelContexts.at(-1));
       assert.equal(context.messages.length, 2);
-      assert.ok(context.systemPrompt.length < 2_011);
+      assert.ok(Buffer.byteLength(context.systemPrompt, "utf8") < config().maxReviewerInputTokens);
       assert.equal(context.systemPrompt.match(/"outcome"/g)?.length, 1);
       assert.match(context.systemPrompt, /\$HOME/);
       assert.match(

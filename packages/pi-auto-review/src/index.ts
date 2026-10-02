@@ -749,7 +749,7 @@ export function createPiAutoReviewExtension(
             decision.kind === "allow" && boundedRequest(surface);
           const autoConfirmQueued =
             allowCapped &&
-            reviewContext.mode === "tui" &&
+            (reviewContext.mode === "tui" || reviewContext.mode === "rpc") &&
             reviewContext.hasUI &&
             uiAutoConfirmer.stage(request.id, surface);
 

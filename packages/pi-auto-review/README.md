@@ -72,10 +72,11 @@ the command, path, resolved path, destination, cwd, agent, or tool input
 invalidates that grant.
 
 Permission-system downgrades authorizer allows on `path` and
-`external_directory` to `defer`. In an interactive TUI,
+`external_directory` to `defer`. In interactive TUI and RPC frontends,
 `autoConfirmBoundedAllows` can bind the exact model allow to the immediately
 following recognized permission dialog. The bridge is request-ID-bound,
-expires after ten seconds, and is consumed once. Mode, component, request, or
+expires after ten seconds, and is consumed once. RPC confirms only the matching
+one-time `Yes` choice, never a session grant. Mode, component, request, or
 event-order mismatches leave the original human dialog in place.
 
 Permission-system 31.x also projects paths named directly by `for`/`select`
@@ -193,7 +194,8 @@ extend retention.
 
 ### Deadlines and retries
 
-`timeoutMs` is one deadline shared by model resolution, authentication, model
+`timeoutMs` accepts 1,000–240,000 milliseconds. It is one deadline shared by
+model resolution, authentication, model
 attempts, and retry delays. Each attempt receives only the remaining time.
 Provider-internal retries are disabled, and a review makes at most two actual
 model calls even when the public `retries` value is higher.

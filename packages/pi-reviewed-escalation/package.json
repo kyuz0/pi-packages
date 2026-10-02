@@ -1,0 +1,23 @@
+{
+  "name": "pi-reviewed-escalation-local",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "version": "0.1.0",
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --experimental-transform-types --import ../pi-auto-review/test/register-external-ts.mjs --test test/*.test.ts test/*.test.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.99.1",
+    "@erichll/pi-auto-review": "^0.22.1",
+    "typebox": ">=1.0.0"
+  },
+  "devDependencies": {
+    "jiti": "^2.7.0"
+  }
+}

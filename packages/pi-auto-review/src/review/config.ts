@@ -83,9 +83,9 @@ export function validateConfig(value: unknown, source: string): Config {
   if (
     !Number.isInteger(config.timeoutMs) ||
     config.timeoutMs < 1_000 ||
-    config.timeoutMs > 120_000
+    config.timeoutMs > 240_000
   ) {
-    throw new Error(`${EXTENSION_NAME}: timeoutMs must be 1000..120000`);
+    throw new Error(`${EXTENSION_NAME}: timeoutMs must be 1000..240000`);
   }
   if (
     !Number.isInteger(config.maxTokens) ||

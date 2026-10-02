@@ -22,6 +22,14 @@ function makeTempDir(prefix: string): string {
   return mkdtempSync(join(TEST_TMP_ROOT, prefix));
 }
 
+test("trusted configuration supports four-minute reviews without loosening project limits", () => {
+  const trusted = applyUserConfig(loadConfig(), { timeoutMs: 240_000 });
+  assert.equal(trusted.timeoutMs, 240_000);
+  assert.throws(() => applyUserConfig(loadConfig(), { timeoutMs: 240_001 }));
+  assert.equal(applyProjectConfig(trusted, { timeoutMs: 120_000 }).timeoutMs, 120_000);
+  assert.throws(() => applyProjectConfig({ ...trusted, timeoutMs: 120_000 }, { timeoutMs: 240_000 }));
+});
+
 test("project config can only tighten trusted settings and is frozen", () => {
   const trusted = loadConfig();
   const effective = applyProjectConfig(trusted, {

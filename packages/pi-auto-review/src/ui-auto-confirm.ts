@@ -5,6 +5,7 @@ import type {
 import { pathSurfaceInfo } from "./path-surfaces.ts";
 
 type UiCustom = ExtensionUIContext["custom"];
+type UiSelect = ExtensionUIContext["select"];
 
 type PermissionUiPromptEvent = {
   requestId: string;
@@ -46,7 +47,7 @@ const DEFAULT_PENDING_TTL_MS = 10_000;
 
 /**
  * Bridges a model allow that the permission-system delegation envelope capped
- * to defer into the immediately following local TUI terminal.
+ * to defer into the immediately following local TUI or RPC confirmation.
  *
  * The bridge is deliberately request-bound and one-shot. Any timing, event, UI,
  * component, or wrapper mismatch leaves the normal human dialog in control.
@@ -73,7 +74,9 @@ export class PermissionUiAutoConfirmer {
 
   handlePrompt(raw: unknown, ctx: ExtensionContext): void {
     const event = parsePermissionUiPromptEvent(raw);
-    if (!event || ctx.mode !== "tui" || !ctx.hasUI) return;
+    if (!event || (ctx.mode !== "tui" && ctx.mode !== "rpc") || !ctx.hasUI) return;
+    // RPC has no component identity to inspect. Require the structured gate.
+    if (ctx.mode === "rpc" && !event.gateSurface) return;
 
     this.pruneExpired();
     const pending = this.pending.get(event.requestId);
@@ -102,7 +105,10 @@ export class PermissionUiAutoConfirmer {
       recognized: false,
     };
     this.activeAttempt = attempt;
-    if (!this.installOneShotInterceptor(ctx.ui, event, attempt)) {
+    const installed = ctx.mode === "rpc"
+      ? this.installOneShotSelectInterceptor(ctx.ui, event, attempt)
+      : this.installOneShotInterceptor(ctx.ui, event, attempt);
+    if (!installed) {
       attempt.controller.abort();
       attempt.settled = true;
       this.activeAttempt = undefined;
@@ -117,6 +123,61 @@ export class PermissionUiAutoConfirmer {
     attempt.restore?.();
     attempt.controller.abort();
     attempt.settled = true;
+  }
+
+  private installOneShotSelectInterceptor(
+    ui: ExtensionUIContext,
+    event: PermissionUiPromptEvent,
+    attempt: PromptAttempt,
+  ): boolean {
+    const previousSelect = ui.select;
+    let invoked = false;
+    let wrapper: UiSelect;
+    const restore = () => {
+      try {
+        if (ui.select === wrapper) ui.select = previousSelect;
+      } catch {
+        // Leave a conflicting UI wrapper in control.
+      }
+    };
+    const release = () => {
+      attempt.settled = true;
+      attempt.controller.abort();
+      if (this.activeAttempt === attempt) this.activeAttempt = undefined;
+    };
+    wrapper = ((title, options, selectOptions) => {
+      if (invoked) return Reflect.apply(previousSelect, ui, [title, options, selectOptions]);
+      invoked = true;
+      restore();
+      const plain = normalizeWhitespace(stripAnsi(title));
+      const needle = event.fingerprint.slice(0, FINGERPRINT_PREFIX);
+      const surface = event.gateSurface!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const recognized =
+        /^Permission Required(?: \(Subagent\))? /.test(plain) &&
+        new RegExp(`(?:^| )surface\\s*:\\s*${surface}(?= |$)`).test(plain) &&
+        needle.length > 0 && plain.replace(/\s/g, "").includes(needle.replace(/\s/g, "")) &&
+        (options.length === 4 || options.length === 5) &&
+        options[0] === "Yes" && options[1]?.startsWith("Yes,") &&
+        options.at(-2) === "No" && options.at(-1) === "No, provide reason" &&
+        !selectOptions?.signal?.aborted;
+      release();
+      // Approve this ask only, never either session-grant option.
+      if (recognized) return Promise.resolve("Yes");
+      return Reflect.apply(previousSelect, ui, [title, options, selectOptions]);
+    }) as UiSelect;
+    attempt.restore = restore;
+    try {
+      ui.select = wrapper;
+      if (ui.select !== wrapper) return false;
+    } catch {
+      return false;
+    }
+    queueMicrotask(() => {
+      if (invoked) return;
+      restore();
+      release();
+    });
+    return true;
   }
 
   private installOneShotInterceptor(
