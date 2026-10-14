@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import platform
+import posixpath
 import subprocess
 import tarfile
 import tempfile
@@ -46,8 +47,14 @@ with remote('bubblewrap') as source, tempfile.TemporaryDirectory() as tmp:
         parts = Path(entry.name).parts[1:]
         if not parts or '..' in parts or entry.isdir():
             continue
+        original = entry
+        if entry.issym():
+            resolved = posixpath.normpath(posixpath.join(posixpath.dirname(entry.name), entry.linkname))
+            if not resolved.startswith(entry.name.split('/', 1)[0] + '/'):
+                raise RuntimeError('Source symlink escapes archive: ' + entry.name)
+            entry = source.getmember(resolved)
         if not entry.isfile():
-            raise RuntimeError('Unexpected Bubblewrap source entry: ' + entry.name)
+            raise RuntimeError('Unexpected Bubblewrap source entry: ' + original.name)
         target = build.joinpath(*parts)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(source.extractfile(entry).read())
