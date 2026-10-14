@@ -18,7 +18,7 @@ export default function containerSubagents(pi: ExtensionAPI): void {
   let registration: RequiredChildExtensionRegistration | undefined;
   pi.on("session_start", async (_event, ctx) => {
     registration?.dispose();
-    const sessionId = ctx.sessionManager.getSessionFile() ?? ctx.sessionManager.getSessionId();
+    const sessionId = ctx.sessionManager.getSessionId();
     registration = registerRequiredChildExtensions({
       sessionId,
       requireForAllRunners: true,
