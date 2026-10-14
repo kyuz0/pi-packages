@@ -1,0 +1,11 @@
+{
+  "name": "pi-session-schedule",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Current-chat scheduling integration for managed Pi containers",
+  "license": "MIT",
+  "pi": { "extensions": ["./index.mjs"] },
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "dependencies": { "pi-schedule-prompt": "0.4.1" }
+}
