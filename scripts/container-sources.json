@@ -2,5 +2,9 @@
   "sandbox-runtime": {
     "url": "https://codeload.github.com/anthropics/sandbox-runtime/tar.gz/d9aac2098351ca17f3743fbaf6ecbd0051b7e00e",
     "sha256": "3773976b4bccbfcf7209d96c9f2bf064b6ade662d7f287c5aa73937c4f395ee2"
+  },
+  "bubblewrap": {
+    "url": "https://codeload.github.com/containers/bubblewrap/tar.gz/719a4fd474d44b26906bcf2b1b0fb6eddd8d56d0",
+    "sha256": "e55bdb06f051664ecd3297d449a8b679b7cd1c73adb292b73a81d9b03c5fc462"
   }
 }

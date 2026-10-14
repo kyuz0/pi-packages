@@ -7,8 +7,9 @@ extensions to the fork's source, not published copies of those extensions.
 
 A container image can run `npm ci --omit=dev`, then
 `python3 scripts/prepare-container.py` as root with Python 3, gcc, libc development
-files and libseccomp development files installed. The build requires network
-access to the checksummed Sandbox Runtime source archive. The script verifies
+files, libseccomp/libcap/libselinux development files, Meson, Ninja and pkg-config
+installed. The build requires network
+access to the checksummed Bubblewrap 0.13.0 and Sandbox Runtime source archives. The script verifies
 its supported dependency versions before adapting them and recompiles the native
 Unix-socket filter helper for x86-64 or arm64.
 

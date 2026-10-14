@@ -38,6 +38,25 @@ def replace(path, old, new):
     path.write_text(text.replace(old, new))
 
 
+# Bubblewrap 0.13 uses mount_setattr for read-only binds, which works inside
+# rootless SELinux containers where legacy remount operations are denied.
+with remote('bubblewrap') as source, tempfile.TemporaryDirectory() as tmp:
+    build = Path(tmp)
+    for entry in source.getmembers():
+        parts = Path(entry.name).parts[1:]
+        if not parts or '..' in parts or entry.isdir():
+            continue
+        if not entry.isfile():
+            raise RuntimeError('Unexpected Bubblewrap source entry: ' + entry.name)
+        target = build.joinpath(*parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.extractfile(entry).read())
+        target.chmod(entry.mode & 0o755)
+    subprocess.run(['meson', 'setup', str(build / 'build'), str(build), '--prefix=/usr/local',
+                    '-Dtests=false', '-Dman=disabled', '-Dbash_completion=disabled',
+                    '-Dzsh_completion=disabled'], check=True)
+    subprocess.run(['ninja', '-C', str(build / 'build'), 'install'], check=True)
+
 # Fail closed on dependency updates: every edit must match exactly once.
 assert json.loads((modules / '@anthropic-ai/sandbox-runtime/package.json').read_text())['version'] == '0.0.79'
 assert json.loads((modules / '@gotgenes/pi-permission-system/package.json').read_text())['version'] == '40.2.0'
