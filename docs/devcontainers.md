@@ -33,3 +33,9 @@ For proxy-only containers, set `SANDBOX_NETWORK_MODE=allowlist` and
 hostnames and ports. Hostname syntax checks and automatic review remain active;
 DNS resolution belongs to the gateway. Other modes retain public DNS validation.
 Reviewed escalation runs in the outer devcontainer and cannot exceed its access.
+
+Managed built-in workers receive private temporary copies of models, credentials
+and profile instructions, cleaned up when their process ends. Their own review
+extensions remain active; the parent already isolates the entire worker process,
+so workers do not load another sandbox or an escalation tool. The parent home
+remains hidden and workspace policy cannot loosen the managed sandbox defaults.

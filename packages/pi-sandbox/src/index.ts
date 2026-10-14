@@ -351,7 +351,7 @@ async function performRegistration(
           parentId,
           cwd: ctx.cwd,
           model: params.model,
-          tools: pi.getActiveTools().filter((name) => name !== "subagent"),
+          tools: pi.getActiveTools().filter((name) => name !== "subagent" && name !== "bash_escalate"),
           policy: createDefaultPolicy(ctx.cwd, { additionalAllowRead, network }),
           sandbox: options.sandbox,
           review: async (trap: Parameters<typeof approveSandboxTrap>[0]) =>

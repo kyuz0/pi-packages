@@ -617,6 +617,9 @@ export function loadPiSandboxConfig(
     }
   }
 
+  if (process.env.PI_SANDBOX_CONTAINER === "1") {
+    return globalConfig ?? defaultPiSandboxConfig();
+  }
   const projectPath = getProjectPiSandboxConfigPath(options.cwd);
   let projectRaw: PartialPiSandboxConfig | undefined;
   try {
