@@ -1,5 +1,3 @@
-import { prepareContainerWorker } from "./container-worker.ts";
-import { createDefaultPolicy } from "./policy.ts";
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -361,18 +359,16 @@ export class ProcessBackedSubagentSession {
       this.startReady = { resolve, reject };
     });
     const envDepth = String(this.depth);
-    const worker = prepareContainerWorker(this.options.env ?? process.env,
-      this.options.policy ?? createDefaultPolicy(this.options.cwd));
     const run = runSandboxedCommand({
       command: `process-backed subagent rpc ${this.id}`,
       cwd: this.options.cwd,
       env: {
-        ...(worker?.env ?? this.options.env ?? process.env),
+        ...(this.options.env ?? process.env),
         [SUBAGENT_DEPTH_ENV]: envDepth,
       },
       signal: this.controller.signal,
       timeout: this.options.timeout,
-      policy: worker?.policy ?? this.options.policy,
+      policy: this.options.policy,
       ...this.options.sandbox,
       directInvocation: { command: invocation.command, args },
       review: this.options.review,
@@ -397,7 +393,7 @@ export class ProcessBackedSubagentSession {
         if (this.stateValue === "stopped" && this.controller.signal.aborted) return;
         this.fail(error instanceof Error ? error : new Error(String(error)));
       },
-    ).finally(() => worker?.cleanup());
+    );
     await ready;
     await this.send("get_state");
     this.stateValue = "idle";

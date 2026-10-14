@@ -8,8 +8,10 @@ import { dirname, isAbsolute, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export default function reviewedEscalation(pi: ExtensionAPI): void {
-  // Worker processes remain contained by their outer sandbox.
-  if (process.env.PI_SANDBOX_SUBAGENT_DEPTH || process.env.PI_SUBAGENT_CHILD === "1") return;
+  // On a standalone host, contained workers cannot escalate past their outer
+  // sandbox. Managed devcontainer children share the parent execution boundary.
+  if (process.env.PI_SANDBOX_CONTAINER !== "1" &&
+      (process.env.PI_SANDBOX_SUBAGENT_DEPTH || process.env.PI_SUBAGENT_CHILD === "1")) return;
   const container = process.env.PI_SANDBOX_CONTAINER === "1";
   const boundary = container ? "outer container" : "host";
   let turn = 0;

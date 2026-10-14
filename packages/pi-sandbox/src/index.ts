@@ -351,7 +351,7 @@ async function performRegistration(
           parentId,
           cwd: ctx.cwd,
           model: params.model,
-          tools: pi.getActiveTools().filter((name) => name !== "subagent" && name !== "bash_escalate"),
+          tools: pi.getActiveTools().filter((name) => name !== "subagent"),
           policy: createDefaultPolicy(ctx.cwd, { additionalAllowRead, network }),
           sandbox: options.sandbox,
           review: async (trap: Parameters<typeof approveSandboxTrap>[0]) =>
@@ -611,7 +611,9 @@ async function performRegistration(
       } else {
         ctx.ui.notify(
           isNativeSubagentChild
-            ? "pi-sandbox active in native subagent child; writes are restricted to sandboxed Bash"
+            ? (process.env.PI_SANDBOX_CONTAINER === "1"
+              ? "pi-sandbox active in devcontainer child; Bash uses the same sandbox as the parent"
+              : "pi-sandbox active in native subagent child; writes are restricted to sandboxed Bash")
             : "pi-sandbox subagent provider: off; pi-sandbox protects Bash execution only",
           "info",
         );

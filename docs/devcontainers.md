@@ -34,8 +34,11 @@ hostnames and ports. Hostname syntax checks and automatic review remain active;
 DNS resolution belongs to the gateway. Other modes retain public DNS validation.
 Reviewed escalation runs in the outer devcontainer and cannot exceed its access.
 
-Managed built-in workers receive private temporary copies of models, credentials
-and profile instructions, cleaned up when their process ends. Their own review
-extensions remain active; the parent already isolates the entire worker process,
-so workers do not load another sandbox or an escalation tool. The parent home
-remains hidden and workspace policy cannot loosen the managed sandbox defaults.
+For workers with the same capabilities as the parent, load the standard
+`pi-subagents` package, configure pi-sandbox's `subagents.provider` as `off`, and
+load `packages/pi-sandbox/src/container-subagents.ts`. That integration uses the
+package's public required-child-extensions API to retain automatic review,
+permissions, reviewed escalation and sandboxed Bash in every native child. It
+does not set a reduced tool ceiling or wrap the whole Pi worker in another OS
+sandbox. Use an agent definition without a tool allowlist, with inherited skills
+and context enabled. The devcontainer remains the outer execution boundary.
