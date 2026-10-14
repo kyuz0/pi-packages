@@ -1,0 +1,6 @@
+{
+  "sandbox-runtime": {
+    "url": "https://codeload.github.com/anthropics/sandbox-runtime/tar.gz/d9aac2098351ca17f3743fbaf6ecbd0051b7e00e",
+    "sha256": "3773976b4bccbfcf7209d96c9f2bf064b6ade662d7f287c5aa73937c4f395ee2"
+  }
+}

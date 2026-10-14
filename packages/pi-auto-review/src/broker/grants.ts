@@ -22,6 +22,12 @@ export function boundaryRequestHash(request: BoundaryRequest): string {
     operation: request.operation,
     cwd: request.cwd,
     command: request.command,
+    executedUnit: request.executedUnit,
+    fullCommand: request.fullCommand,
+    matchedPattern: request.matchedPattern,
+    // matchedSpelling stays out: it is display-only (#910) and derives from the
+    // same request, so binding it would change grant hashes when a permission-
+    // system upgrade starts (or stops) projecting it.
     path: request.path,
     resolvedPath: request.resolvedPath,
     destination: request.destination,

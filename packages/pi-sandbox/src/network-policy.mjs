@@ -58,6 +58,12 @@ export async function validatePublicHostname(
 ) {
   const hostname = normalizePublicHostname(value);
   if (!hostname) return undefined;
+  // The outer allowlist gateway owns DNS in proxy-only containers. A model
+  // grant cannot bypass its exact hostname/port policy. Ordinary installations
+  // and unrestricted containers retain public-address validation below.
+  if (process.env.PI_SANDBOX_CONTAINER === "1" &&
+      process.env.SANDBOX_NETWORK_MODE === "allowlist" &&
+      process.env.HTTPS_PROXY === "http://127.0.0.1:3128") return hostname;
   try {
     const addresses = await resolve(hostname);
     return addresses.length > 0 &&

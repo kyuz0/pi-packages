@@ -13,8 +13,8 @@
     "test": "node --disable-warning=ExperimentalWarning --experimental-transform-types --import ../pi-auto-review/test/register-external-ts.mjs --test test/*.test.ts test/*.test.mjs"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.99.1",
-    "@erichll/pi-auto-review": "^0.22.1",
+    "@earendil-works/pi-coding-agent": ">=1.1.0",
+    "@erichll/pi-auto-review": "^0.26.1",
     "typebox": ">=1.0.0"
   },
   "devDependencies": {

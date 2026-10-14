@@ -31,10 +31,11 @@ that dependency is a hard prerequisite (see [Install and enable](#install-and-en
 > **Prerequisite:** pi-auto-review is an authorizer inside
 > `@gotgenes/pi-permission-system`. Pi does not auto-install peer packages, so
 > install the permission system separately (once per machine) before this
-> extension. This release line requires Pi 0.99.1 or later and supports
-> permission-system 36.0.0 and later:
+> extension. This release line requires Pi 1.1.0 or later and
+> permission-system 40.1.1 or later, including the bash-chain session-grant
+> security fix:
 
-Node-based Pi requires Node.js 22.13.0 or newer. Permission auditing uses the
+Node-based Pi requires Node.js 22.19.0 or newer. Permission auditing uses the
 host runtime's built-in SQLite: `node:sqlite` on Node and `bun:sqlite` on Bun,
 including Bun-compiled Pi (verified with Bun 1.3.14). It does not require a
 SQLite CLI, system SQLite library, or npm SQLite package.
@@ -96,6 +97,31 @@ Deterministic hard denies cover recursive forced wipes of `/`, `~`, and
 `$HOME`. A named path under `/home/...` is reviewed by the model as high-risk,
 not treated as a home-directory wipe.
 
+Review and authorization use the command that will actually execute, not only
+the unit the matched rule names. When a wrapper (`sudo`, `env`, `xargs`,
+`bash -c`, `eval`, or an interpreter payload) hides the real program, the
+permission-system ask payload supplies the executed unit, the complete command,
+and the matched rule, and those facts are what get hashed, reviewed, and
+hard-denied. Hard denies check the complete command, outer unit, and executed
+unit independently. Structural rules mask inert shell literals without turning
+named paths into root/home targets, and follow nested shell payloads. Other
+interpreter payloads and heredoc bodies are conservatively scanned as raw text;
+credential rules also keep scanning raw text. When a command fact exceeds the
+reviewer bound (10 KiB), the ask defers to a human instead of being reviewed from
+a truncated program.
+
+Permission-system 40.x also reports the alternate command spelling a rule
+matched, for example `cat /repo/file` when the command was `cat ./file`.
+The reviewer sees this as explanatory evidence; it does not replace the actual
+command or enter the grant/retry hash. Absolute-path Bash rules now also reach
+relative spellings of that path, so review existing allow/ask/deny rules when
+upgrading from 39.x.
+
+Nested interpreter expansion is limited to 32 payloads and 32 KiB of cumulative
+payload text per command fact, across all recursion levels. Exceeding either
+budget keeps the raw-command hard-deny checks and otherwise defers to a human
+without calling the model. A reviewer-retry override does not bypass this limit.
+
 ## Configuration
 
 Configuration is resolved in this order:
@@ -139,19 +165,20 @@ to select a model whose ID is literally `current`.
 
 For a complete `@gotgenes/pi-permission-system` config that wires
 `pi-auto-review` into the authorizer chain — a copyable baseline covering
-read/write/edit, a read-only bash allowlist, an MCP discovery policy, and a
+read/write/edit, a read-only bash allowlist, MCP tool access, and a
 `path` deny block for secret and credential files — see
 [`examples/pi-permission-system.config.example.json`](examples/pi-permission-system.config.example.json).
 
-MCP rules are evaluated last-match-wins across the candidates derived for one
-call: the tool name, its bare server, and `mcp_call`. Keep `"*"` first in the
-`mcp` block and narrower server or tool entries after it, as the example does,
-so a specific rule cannot be shadowed by the catch-all. A bare server entry
-such as `"atlassian": "allow"` also matches the `mcp connect <server>`
-candidate list, so it auto-allows starting that server — prefer the `server_*`
-and `server:*` forms for tool calls. Any entry meant to narrow a broad allow
-(such as a destructive-tool pattern) must be written after it, or
-last-match-wins shadows it.
+Permission-system 38.0.0 gates Pi's built-in MCP tools on the `mcp` surface, so
+the example writes its `mcp__<server>__*` rules inside a `mcp` block instead of
+as top-level tool names. MCP rules are evaluated last-match-wins across the
+candidates derived for one call: the tool name, its bare server, and `mcp_call`.
+A call the `mcp` block does not match falls through to the universal
+`"*": "ask"`, and any broad catch-all must be written before a narrower
+override or last-match-wins shadows it. A bare server entry such as
+`"atlassian": "allow"` also matches the `mcp connect <server>` candidate list,
+so it auto-allows starting that server — prefer the `server_*` and `server:*`
+forms for tool calls.
 
 Package defaults:
 
@@ -391,7 +418,10 @@ assignments, quoted values, and option values are replaced with `*`; safe bare
 command words remain in plaintext so the report can emit a matching rule.
 Paths used for path-surface statistics become only
 `workspace`, `temp`, `home`, `external`, `sensitive`, or `unknown`. Request IDs,
-project locations, and matched-rule patterns are HMACed. Syntactically valid
+project locations, matched-rule patterns, and alternate command spellings are
+HMACed. Spelling facts are captured at authorizer entry as well as human prompts,
+so automatic allow/deny decisions are included; 39.x requests simply lack the
+field. Reports expose only anonymous spelling fingerprints. Syntactically valid
 custom tool names are also retained in plaintext; invalid names stay anonymous
 as `<custom-tool>`. The database never stores raw commands, raw paths,
 URLs, credentials, or non-Bash tool arguments and inputs. Because safe bare Bash
@@ -400,7 +430,11 @@ project-specific labels; inspect suggestions before copying them.
 
 Data lives at
 `~/.pi/agent/extensions/pi-auto-review/policy-audit.sqlite`, beside an
-owner-only HMAC key. Node and Bun use the same database schema and key, so
+owner-only HMAC key. Version 0.25.0 migrates the database to schema v3; older
+auto-review collectors cannot use that schema. After upgrading, restart or
+reload all sessions using the old extension. Do not delete the database to
+resolve a mixed-version collector warning. Node and Bun use the same database
+schema and key, so
 switching runtimes preserves statistics and request deduplication.
 The directory is mode `0700`; the key, database, WAL, and
 SHM are mode `0600`. Initialization, lock, write, or corruption failures disable

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 // These deep imports reach pi-permission-system internals that its public
-// entry (".") does not export. They are pinned to the 33.x source layout:
+// entry (".") does not export. They are verified against the 40.1.1 source layout:
 // 31.1.1 moved path-normalizer.ts, 33.0.0 changed MCP target derivation and
 // rule evaluation (see test/mcp-rule-semantics.test.ts). When upgrading across
 // minor/major lines, re-verify every path below.
@@ -11,6 +13,7 @@ import { AuthorizerRegistry } from "../../../node_modules/@gotgenes/pi-permissio
 import { composeAuthorizerChain } from "../../../node_modules/@gotgenes/pi-permission-system/src/authority/authorizer-chain.ts";
 import { encloseInDelegationEnvelope } from "../../../node_modules/@gotgenes/pi-permission-system/src/authority/delegation-envelope.ts";
 import { BashProgram } from "../../../node_modules/@gotgenes/pi-permission-system/src/access-intent/bash/program.ts";
+import { buildToolAskPayload } from "../../../node_modules/@gotgenes/pi-permission-system/src/presentation/tool-ask-payload.ts";
 import { capabilitySurfaceForEffect } from "../../../node_modules/@gotgenes/pi-permission-system/src/access-intent/path-surfaces.ts";
 import { posixPathFlavor } from "../../../node_modules/@gotgenes/pi-permission-system/src/path/path-flavor.ts";
 import { PathNormalizer } from "../../../node_modules/@gotgenes/pi-permission-system/src/path/path-normalizer.ts";
@@ -29,6 +32,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai/compat";
 import { getBoundaryBroker } from "../src/broker/index.ts";
 import { boundaryRequestHash } from "../src/broker/grants.ts";
+import { complete } from "../src/review/complete.ts";
 import { approveSandboxTrap } from "../../pi-sandbox/src/approval.ts";
 
 type ModelBehavior =
@@ -100,6 +104,9 @@ function config(overrides: Partial<Config> = {}): Config {
     ...loadConfig(),
     retries: 0,
     timeoutMs: 1_000,
+    // Ordinary extension tests must never open or migrate the operator's DB.
+    // Audit integration opts in only after switching HOME to a temporary dir.
+    policyAudit: { enabled: false, retentionDays: 180 },
     ...overrides,
   };
 }
@@ -113,6 +120,8 @@ function harness(
     interactiveTui?: boolean;
     uiPromptRequestId?: string;
     recognizePermissionComponent?: boolean;
+    settledBeforePrompt?: Record<string, unknown>;
+    settledAfterPrompt?: Record<string, unknown>;
     emitReady?: boolean;
     sessionId?: string;
     adjudicatesLocally?: boolean;
@@ -182,7 +191,7 @@ function harness(
     ) {
       commands.set(name, command);
     },
-    sendUserMessage(message: string) {
+    sendUserMessage(message: string, _options?: { deliverAs?: "steer" | "followUp" }) {
       sentUserMessages.push(message);
     },
     registerEntryRenderer() {},
@@ -382,6 +391,9 @@ function harness(
                 (typeof details.surface === "string"
                   ? details.surface
                   : "external_directory");
+              if (options.settledBeforePrompt) {
+                handlers.get("agent_settled")?.(options.settledBeforePrompt, context);
+              }
               events.emit("permissions:ui_prompt", {
                 requestId:
                   options.uiPromptRequestId ?? details.requestId,
@@ -406,6 +418,9 @@ function harness(
                 },
                 forwarding: details.forwarding ?? null,
               });
+              if (options.settledAfterPrompt) {
+                handlers.get("agent_settled")?.(options.settledAfterPrompt, context);
+              }
               return context.ui.custom(
                 (_tui, _theme, _keybindings, _done) =>
                   options.recognizePermissionComponent === false
@@ -496,8 +511,9 @@ function harness(
       sessionModel = model;
     },
     dispose() {
-      handlers.get("session_shutdown")?.();
+      const shutdown = handlers.get("session_shutdown")?.();
       unpublishPermissionsService(harnessSessionId, service as never);
+      return shutdown;
     },
   };
 }
@@ -690,6 +706,72 @@ test("in-process nodes register independently and child shutdown preserves paren
   } finally {
     parent.dispose();
     unpublishPermissionsService("child-session", {} as never);
+  }
+});
+
+test("automatic authorizer spellings reach policy audit without a UI prompt", async () => {
+  const previousHome = process.env.HOME;
+  const home = mkdtempSync(join(tmpdir(), "pi-authorizer-spelling-"));
+  process.env.HOME = home;
+  try {
+    const cases = [
+      { outcome: "allow", command: "cat ./notes.txt", approved: true, modelCalls: 1 },
+      { outcome: "deny", command: "cat ./notes.txt", approved: false, modelCalls: 1 },
+      { outcome: "allow", command: "env NODE_TLS_REJECT_UNAUTHORIZED=0 node ./app.js", approved: false, modelCalls: 0 },
+    ];
+    for (const [index, sample] of cases.entries()) {
+      const instance = harness(JSON.stringify({
+        outcome: sample.outcome, risk_level: "low", user_authorization: "high",
+        rationale: "test verdict",
+      }), {
+        sessionId: `automatic-spelling-${index}`,
+        config: config({ policyAudit: { enabled: true, retentionDays: 180 } }),
+      });
+      let prompts = 0;
+      instance.events.on("permissions:ui_prompt", () => { prompts++; });
+      try {
+        const program = await BashProgram.parse(sample.command, new PathNormalizer(posixPathFlavor, process.cwd()));
+        const unit = program.commands()[0];
+        const spelling = unit?.spellings?.[0];
+        assert.ok(spelling, "real parser supplies the alternate spelling");
+        const requestId = `automatic-spelling-${index}`;
+        const payload = buildToolAskPayload({
+          check: { toolName: "bash", command: unit.text, executedUnit: unit.executedUnit,
+            state: "ask", matchedPattern: spelling, matchedSpelling: spelling },
+          agentName: null, surface: "bash", input: { command: sample.command },
+        });
+        const result = await instance.authorize("bash", { requestId, command: unit.text, payload });
+        assert.equal(result.decision.approved, sample.approved);
+        assert.equal(result.terminalCalls, 0);
+        assert.equal(prompts, 0);
+        assert.equal(instance.modelContexts.length, sample.modelCalls);
+        if (sample.modelCalls > 0) {
+          const input = JSON.parse(reviewerTranscript(instance.modelContexts[0]).userPrompt);
+          assert.equal(input.request.matchedSpelling, spelling);
+        }
+        // Match the real decision contract: it has a pattern but no spelling.
+        instance.events.emit("permissions:decision", {
+          requestId, surface: "bash", value: unit.text,
+          result: sample.approved ? "allow" : "deny",
+          resolution: sample.approved ? "authorizer_allowed" : "authorizer_denied",
+          origin: "global", matchedPattern: spelling,
+        });
+        await instance.commands.get("auto-review-policy-audit")!.handler("--min-count 1", instance.context);
+        const entry = instance.appendedEntries.find((item) => item.type === "pi-auto-review-policy-audit");
+        assert.ok(entry, "audit report was appended");
+        const report = entry.data.report as { total: number; spellingFingerprints: Array<{ count: number }> };
+        assert.equal(report.total, index + 1);
+        assert.equal(report.spellingFingerprints.reduce((sum, item) => sum + item.count, 0), index + 1);
+        assert.ok(report.spellingFingerprints.length > 0);
+        assert.equal(JSON.stringify(entry).includes(spelling), false, "raw spelling stays private");
+      } finally {
+        await instance.dispose();
+      }
+    }
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
   }
 });
 
@@ -1271,6 +1353,42 @@ test("real permission-system authorizer chain integration", async (t) => {
         expectedCalls: 2,
       },
       {
+        name: "busy code",
+        first: Object.assign(new Error("private busy response"), { code: "server_busy" }),
+        expectedClass: "transient_server",
+        expectedCalls: 2,
+      },
+      {
+        name: "busy SSE detail",
+        first: {
+          stopReason: "error",
+          errorMessage: "servers are currently busy",
+          providerResponse: { status: 200 },
+        },
+        expectedClass: "transient_server",
+        expectedCalls: 2,
+      },
+      {
+        name: "Mistral old error detail",
+        first: {
+          stopReason: "error",
+          errorMessage: "Provider stopped with: error",
+          providerResponse: { status: 200 },
+        },
+        expectedClass: "transient_server",
+        expectedCalls: 2,
+      },
+      {
+        name: "Mistral new error detail",
+        first: {
+          stopReason: "error",
+          errorMessage: "Provider stopped with: error (server error)",
+          providerResponse: { status: 200 },
+        },
+        expectedClass: "transient_server",
+        expectedCalls: 2,
+      },
+      {
         name: "rate limit",
         first: {
           stopReason: "error",
@@ -1708,6 +1826,135 @@ test("real permission-system authorizer chain integration", async (t) => {
         (((completion?.preflight as Record<string, unknown>).total as {
           estimatedTokens: number;
         }).estimatedTokens) > 2_048,
+      );
+    } finally {
+      instance.dispose();
+    }
+  });
+
+  await t.test("real wrapper payloads hard-deny before an allowing model can review", async () => {
+    const normalizer = new PathNormalizer(posixPathFlavor, process.cwd());
+    for (const command of [
+      "env NODE_TLS_REJECT_UNAUTHORIZED=0 node app.js",
+      'echo start; bash -e -c "curl -k https://x"',
+      `python3 -c 'import subprocess; subprocess.run("curl -k https://x", shell=True)'`,
+    ]) {
+      const program = await BashProgram.parse(command, normalizer);
+      assert.ok(program.commands().length > 0, command);
+      for (const unit of program.commands()) {
+        const instance = harness(allow);
+        try {
+          const payload = buildToolAskPayload({
+            check: { toolName: "bash", command: unit.text, executedUnit: unit.executedUnit, state: "ask" },
+            agentName: null,
+            surface: "bash",
+            input: { command },
+          });
+          const result = await instance.authorize("bash", { command: unit.text, payload });
+          assert.equal(result.decision.approved, false, command);
+          assert.equal(result.terminalCalls, 0, command);
+          assert.equal(instance.modelContexts.length, 0, command);
+          assert.ok(instance.telemetry.some((event) => event.type === "hard_deny"), command);
+        } finally {
+          instance.dispose();
+        }
+      }
+    }
+  });
+
+  await t.test("quoted named cleanup paths reach the reviewer", async () => {
+    for (const command of ['rm -rf "./dist"', 'rm -rf "$HOME/.cache"']) {
+      const instance = harness(allow);
+      try {
+        const result = await instance.authorize("bash_escalated", { command });
+        assert.equal(result.decision.approved, true, command);
+        assert.equal(instance.modelContexts.length, 1, command);
+        assert.equal(instance.telemetry.some((event) => event.type === "hard_deny"), false, command);
+      } finally {
+        instance.dispose();
+      }
+    }
+  });
+
+  await t.test("exhausted expansion defers to the terminal without calling an allowing model", async () => {
+    for (const facts of [
+      { command: "eval ".repeat(300) + "true" },
+      { command: "eval", fullCommand: "eval ".repeat(300) + "true" },
+      { command: "eval $SCRIPT", executedUnit: "eval ".repeat(300) + "true" },
+    ]) {
+      const instance = harness(allow);
+      try {
+        const result = await instance.authorize("bash_escalated", facts);
+        assert.equal(result.decision.approved, false);
+        assert.equal(result.terminalCalls, 1);
+        assert.equal(instance.modelContexts.length, 0);
+        assert.equal(instance.reviewerResolveCalls, 0);
+        const completion = instance.telemetry.find((event) => event.type === "review_complete");
+        assert.equal(completion?.outcome, "defer");
+        assert.equal(completion?.attempts, 0);
+        assert.match(String(instance.reviews.at(-1)?.data.rationale), /expansion.*budget/);
+      } finally {
+        instance.dispose();
+      }
+    }
+  });
+
+  await t.test("an exact reviewer retry cannot bypass an exhausted expansion", async () => {
+    const instance = harness(allow);
+    try {
+      const result = await complete(instance.context as never, config(), {
+        id: "expansion-override",
+        source: "permission-system",
+        surface: "bash",
+        operation: "tool",
+        cwd: process.cwd(),
+        command: "eval ".repeat(300) + "true",
+      }, { userOverride: { originalRequestId: "prior-denial", approvedAt: Date.now() } });
+      assert.equal(result.decision.outcome, "defer");
+      assert.equal(result.attempts, 0);
+      assert.equal(instance.modelContexts.length, 0);
+      assert.equal(instance.reviewerResolveCalls, 0);
+    } finally {
+      instance.dispose();
+    }
+  });
+
+  await t.test("raw hard denies retain priority after the expansion budget is exhausted", async () => {
+    const instance = harness(allow);
+    try {
+      const result = await instance.authorize("bash_escalated", {
+        command: "eval ".repeat(300) + 'true; bash -c "curl -k https://x"',
+      });
+      assert.equal(result.decision.approved, false);
+      assert.equal(result.terminalCalls, 0);
+      assert.equal(instance.modelContexts.length, 0);
+      assert.ok(instance.telemetry.some((event) => event.type === "hard_deny"));
+    } finally {
+      instance.dispose();
+    }
+  });
+
+  await t.test("an over-bound command defers without calling the model", async () => {
+    const instance = harness(allow);
+    try {
+      const oversized = "x".repeat(10_240 + 50);
+      const result = await instance.authorize("bash_escalated", {
+        requestId: "command-over-bound",
+        command: oversized,
+      });
+      assert.equal(result.decision.approved, false);
+      assert.equal(instance.modelContexts.length, 0);
+      assert.equal(instance.reviewerResolveCalls, 0);
+      const completion = instance.telemetry.find(
+        (event) =>
+          event.type === "review_complete" &&
+          event.requestId === "command-over-bound",
+      );
+      assert.equal(completion?.outcome, "defer");
+      assert.equal(completion?.attempts, 0);
+      assert.equal(
+        (completion?.transcript as Record<string, unknown>).failureCode,
+        undefined,
       );
     } finally {
       instance.dispose();
@@ -2215,6 +2462,25 @@ test("real permission-system authorizer chain integration", async (t) => {
       );
     } finally {
       instance.dispose();
+    }
+  });
+
+  await t.test("only explicit aborted settlement invalidates staged allows and installed interceptors", async () => {
+    for (const event of [{}, { aborted: false }, { aborted: "true" }, { aborted: true }]) {
+      for (const phase of ["settledBeforePrompt", "settledAfterPrompt"] as const) {
+        const instance = harness(allow, { interactiveTui: true, [phase]: event });
+        try {
+          const result = await instance.authorize("external_directory");
+          const expectedApproval = event.aborted !== true;
+          assert.equal(result.decision.approved, expectedApproval, `${phase}: ${JSON.stringify(event)}`);
+          assert.deepEqual(instance.uiDecisions, [expectedApproval
+            ? { approved: true, state: "approved", autoApproved: true }
+            : { approved: false, state: "denied" }]);
+          assert.equal(instance.reviews.at(-1)?.data.autoConfirmQueued, true);
+        } finally {
+          instance.dispose();
+        }
+      }
     }
   });
 

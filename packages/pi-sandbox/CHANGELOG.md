@@ -1,5 +1,96 @@
 # Changelog
 
+## 0.26.1 - 2026-10-13
+
+- Upgrade the Pi 1.2.0 development baseline (`pi-coding-agent`, `pi-ai`,
+  typebox `>=1.3.37`) and drop the unused
+  `@earendil-works/pi-server` development dependency: nothing in this package
+  imports it and pi-subagents 0.77.0 no longer references it, while upstream
+  removed the package in 1.2.0.
+- Revalidate the compatibility gate against pi-subagents 0.78.0 on Pi 1.2.0.
+  pi-subagents 0.77.0 required chord for every host from Pi 0.85 onward,
+  which broke background children on Pi 1.2.0 (chord removed upstream);
+  0.78.0 requires chord only when the host manifest declares it, so the
+  package needs no workaround. The deterministic gate and the model-backed
+  native baseline / protected child acceptance pass. Raise the pi-subagents
+  peer floor to `>=0.78.0` because 0.77.x background children fail on
+  Pi 1.2.0; 0.78.0 also works on Pi 1.1.0.
+- Keep the pi-coding-agent peer floor at `>=1.1.0`: both 1.1.0 and 1.2.0 are
+  verified, so 1.1.0 users are not forced onto the newer Pi.
+
+## 0.26.0 - 2026-10-08
+
+- Require `@erichll/pi-auto-review ^0.26.0` so sandbox approvals use the
+  coordinated Pi 1.1.0 reviewer and cancellation fixes.
+- Upgrade Pi development dependencies and the coding-agent peer floor to
+  `^1.1.0`; move pi-subagents to development `^0.76.1` / peer `>=0.76.1` and
+  typebox to development `^1.3.36` / peer `>=1.3.36`. Keep pi-subagents optional
+  and leave the sandbox-runtime and jiti dependency declarations unchanged.
+- Revalidate the deterministic 0.76.1 compatibility gate and isolated Node,
+  Bun, and compiled-Bun host-peer loading on Pi 1.1.0. Fix the copied-package
+  test for dependencies that do not export package.json, including the new
+  Temporal polyfill. Revalidate model-backed acceptance with the native host
+  read baseline and the protected child blocking that read, including the
+  required sandbox runtime acknowledgement.
+- Reject settlement waiters for RPC runs cancelled with Pi 1.1.0
+  `agent_settled.aborted: true`
+  ([#10607](https://github.com/earendil-works/pi/issues/10607)), including
+  waiters registered after the event or after subsequent successful runs.
+  Keep the persistent child idle and available for follow-up instead of
+  reporting a successful result or terminating the session. Legacy events
+  without the field retain their existing behavior.
+- Ignore buffered lifecycle events after an RPC session stops or fails so
+  cancellation and shutdown cannot resurrect a terminal session.
+
+## 0.25.0 - 2026-10-07
+
+- Align the `@erichll/pi-auto-review` dependency with `^0.25.0` so the
+  workspace and sandbox use the same broker implementation and include the
+  permission-system 40.0.2 integration baseline.
+- Revalidate the deterministic and model-backed pi-subagents 0.75.0 gate:
+  the native baseline reads the host probe, while the protected native
+  background child blocks that read and acknowledges the sandbox extension.
+
+## 0.24.0 - 2026-10-03
+
+- Raise the `@earendil-works/pi-coding-agent` peer floor to `^1.0.0` and the
+  development baselines for `pi-ai`, `pi-coding-agent`, and `pi-server` to
+  `^1.0.0`, plus `@types/node` to `^26.6.4`. Validated against Pi 1.0.0 via
+  `tsc --noEmit` and the full test suite: no behavior changes were required.
+- Raise the `pi-subagents` development pin to `^0.75.0` and revalidate the
+  protected loader against it. 0.75.0 is the first release that starts
+  background children on Pi 1.0.0 again (through 0.74.0 they failed with "does
+  not provide @earendil-works/pi-agent-core/node", which pi-agent-core 1.0.0
+  dropped). The deterministic preflight passes on 0.75.0 — package exports,
+  discovery, and the capability-ceiling seams are unchanged from 0.72.1, and
+  the loader comment records the audit. The credential-backed model phases also
+  pass on 0.75.0 — native baseline (`native-host-readable`) and the protected
+  native-background whitelist (`sandboxed-bash-blocked-host-read`) — so the
+  release gate is closed for this pin.
+- Raise the `@anthropic-ai/sandbox-runtime` dependency to `^0.0.78` and the
+  `@erichll/pi-auto-review` dependency to `^0.24.0`.
+- Update the compatibility notes for pi-subagents 0.73.0, which replaced
+  `workflowScript`/`workflowScriptPath` with a single `workflow` field: the
+  loader already rejects every call that sets it (inline, path, or named), so
+  protected mode still permits direct agent launches only.
+
+## 0.23.0 - 2026-10-02
+
+- Add opt-in `network.strictAllowlist` (default `false`) to deny unmatched
+  destinations without model or human approval. Forward the setting to Sandbox
+  Runtime for Bash and built-in workers, including persistent follow-up and
+  nested handoff.
+- Merge global/project strict mode with logical OR while retaining domain-list
+  unions. Both files remain trusted policy sources: projects can add endpoints
+  but cannot disable globally required strict enforcement.
+- Reject strict mode combined with Host-IPC `ask` after configuration merging
+  and embedding overrides. Keep non-strict approval and host forwarding behavior.
+- Require `@erichll/pi-auto-review` `^0.23.0` for current-session review models
+  and full-command execution-context validation.
+- Cover real Linux broker network enforcement, persistent worker lifecycle and
+  startup failures with synthetic endpoints; isolate configuration tests from
+  the developer's working directory.
+
 ## 0.22.1 - 2026-10-01
 
 - Fix sandboxed Bash on Bun-compiled Pi: launching the Sandbox Runtime broker

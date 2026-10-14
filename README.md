@@ -1,20 +1,25 @@
 # pi-packages
 
-An npm workspaces monorepo for Pi security extensions:
+An npm workspaces monorepo for Pi extensions:
 
 | Package | Purpose |
 | --- | --- |
 | [`pi-auto-review`](packages/pi-auto-review) | Model-backed boundary approval broker and permission-system authorizer |
 | [`pi-reviewed-escalation`](packages/pi-reviewed-escalation) | Optional exact-command approval for host Bash execution |
 | [`pi-sandbox`](packages/pi-sandbox) | Anthropic Sandbox Runtime-backed Bash sandbox, with an optional process-backed subagent provider |
+| [`pi-statusline`](packages/pi-statusline) | Configurable footer with Git, session usage, themes, and interactive configuration preview |
 
 The layout follows the package-per-directory structure used by
 [`gotgenes/pi-packages`](https://github.com/gotgenes/pi-packages). The
-extensions are published to npm as `@erichll/pi-auto-review` and
-`@erichll/pi-sandbox`; the matching unscoped names are owned by unrelated
-projects. The repository can also be installed as one Git-backed Pi package.
+extensions are published to npm as `@erichll/pi-auto-review`,
+`@erichll/pi-sandbox` and `@erichll/pi-statusline`; the matching unscoped names
+are owned by unrelated projects. The repository can also be installed as one Git-backed Pi package.
 
 ## Platform status
+
+The platform status and security setup below apply to `pi-auto-review` and
+`pi-sandbox`. The standalone statusline requires only Node.js and Pi 1.0;
+see its [README](packages/pi-statusline/README.md) for local loading and configuration.
 
 - Linux: bubblewrap filesystem/network isolation and end-to-end sandbox paths
   are tested.
@@ -27,8 +32,8 @@ projects. The repository can also be installed as one Git-backed Pi package.
 
 - Node.js 22.19 or newer
 - npm 11
-- Pi 0.99.1 or newer
-- `@gotgenes/pi-permission-system` 36.0.0 or later
+- Pi 1.1.0 or newer
+- `@gotgenes/pi-permission-system` 40.1.1 or later
 - Linux: `bubblewrap`, `socat`, and `ripgrep`
 
 ## Development
@@ -46,12 +51,19 @@ explicitly opt in with
 
 ## Installation
 
-Install both public npm packages at user scope. Load `pi-auto-review` first so
-its broker service is available when `pi-sandbox` starts:
+Install the security packages at user scope. Load `pi-auto-review` first so its
+broker service is available when `pi-sandbox` starts:
 
 ```bash
 pi install npm:@erichll/pi-auto-review
 pi install npm:@erichll/pi-sandbox
+```
+
+The statusline is independent of the two security packages and does not require
+the permission system:
+
+```bash
+pi install npm:@erichll/pi-statusline
 ```
 
 Alternatively, install a reviewed, immutable repository tag or commit as one
@@ -96,7 +108,7 @@ network connections through Sandbox Runtime's reviewed proxy. Its default
 persistent background RPC sessions, follow-up, and nested handoff. Set the
 trusted global provider to `pi-subagents` to let that extension own
 orchestration under the required native-background protection mode
-(`pi-subagents >=0.66.0`, validated through 0.72.1).
+(`pi-subagents >=0.76.1`, deterministically validated on 0.76.1).
 That mode validates a canonical agent whitelist and restricts children to
 `bash`, `read`, `grep`, `find`, and `ls`; writes go through sandboxed Bash. It
 is not whole-worker process isolation. Keep the default `builtin` provider for
@@ -106,8 +118,8 @@ tool. See the package READMEs for provider, platform, and trust-boundary details
 ## Development and release verification
 
 Run deterministic checks with `npm run check` and `npm test`. The external
-provider peer dependency is the range `pi-subagents >=0.66.0` with no upper pin,
-and the development dependency is pinned to `^0.72.1`. The compatibility gate
+provider peer dependency is the range `pi-subagents >=0.76.1` with no upper pin,
+and the development dependency is pinned to `^0.76.1`. The compatibility gate
 verifies package layout, discovery, ceiling registration, launch guards, and
 child acknowledgement. Its model portion uses
 only already-exported credentials and prints `SKIP` rather than claiming

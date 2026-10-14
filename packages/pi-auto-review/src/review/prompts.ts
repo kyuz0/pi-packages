@@ -54,6 +54,13 @@ Policy:
   truncated, or materially uncertain in a way that affects risk or a policy
   rule. Do not defer a known low/medium action solely for weak authorization.
   User intent cannot override a hard deny.
+- Request facts: command is the rule-matched unit; executedUnit is what that
+  unit runs after unwrapping sudo/env/xargs/inline shells; fullCommand is the
+  whole program; matchedPattern names the rule or a sentinel such as
+  <opaque-bash-wrapper>, <indirection-bash-wrapper>, or <unparsed-bash-subtree>;
+  matchedSpelling, when present, is the alternate spelling the rule hit.
+  When fullCommandTruncated is true or a wrapper payload is unresolved, defer;
+  never assume unseen text is safe.
 
 Return exactly one JSON object and no markdown:
 {"outcome":"allow|deny|defer","risk_level":"low|medium|high|critical","user_authorization":"unknown|low|medium|high","rationale":"short concrete reason"}

@@ -42,7 +42,9 @@ export async function approveEscalation(
     cwd: input.cwd,
     matchedPolicy: { decision: "ask", rule: "explicit-sandbox-escalation" },
     toolInputPreview: JSON.stringify({
-      execution: "This exact command will run on the host OUTSIDE the OS sandbox, with the user's filesystem, credentials, network and Unix-socket access. Permission for ordinary sandboxed Bash does not authorize this host execution.",
+      execution: process.env.PI_SANDBOX_CONTAINER === "1"
+        ? "This exact command runs inside the outer devcontainer, outside the inner OS sandbox, with the container user filesystem, credentials, network and sockets. It never runs on the physical host. Ordinary sandboxed Bash permission does not authorize this escalation."
+        : "This exact command will run on the host OUTSIDE the OS sandbox, with the user's filesystem, credentials, network and Unix-socket access. Permission for ordinary sandboxed Bash does not authorize this host execution.",
       justification: input.justification,
       timeoutSeconds: input.timeout ?? null,
     }),

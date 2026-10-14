@@ -172,7 +172,9 @@ export function packageConfigPath(): string {
 }
 
 export function userConfigPath(home = homedir()): string {
-  return join(home, USER_CONFIG_RELATIVE_PATH);
+  return process.env.PI_SANDBOX_CONTAINER === "1"
+    ? "/opt/pi-security/config/auto-review.json"
+    : join(home, USER_CONFIG_RELATIVE_PATH);
 }
 
 function readJsonConfig(path: string): unknown {
