@@ -339,8 +339,8 @@ Grants expire after `grantTtlMs` and cannot be reused.
 
 ## Reviewer context and token budgets
 
-The reviewer receives one compact canonical request plus bounded, explicitly
-untrusted evidence. Selection is deterministic rather than semantic:
+By default, the reviewer receives one compact canonical request plus bounded,
+explicitly untrusted evidence. Selection is deterministic rather than semantic:
 
 - the latest raw user message is the authorization anchor;
 - older user messages require an exact request/tool/requester association or an
@@ -366,8 +366,9 @@ audit evidence.
 
 `maxReviewerInputTokens` covers the fixed policy, canonical request, override,
 evidence, omissions, JSON framing, and a 64-token provider-framing reserve. Its
-legal range is 2,048–32,768. Because no matching tokenizer is bundled, the
-`conservative:utf8` estimator counts every UTF-8 byte as one token.
+legal range is 2,048–32,768. Because no matching tokenizer is bundled, a
+conservative text estimator accounts for JSON framing and CJK text. It is an
+estimate, not the model tokenizer.
 
 When over budget, the host removes secondary reasons, older structured tool
 matches, then optional producer/result units, re-estimating after each step. It
@@ -376,6 +377,76 @@ evidence, security-combination evidence, exact tool linkage, or a required
 surface profile. If mandatory evidence does not fit, review fails closed before
 calling the model. More than four security-combination candidates also fails
 closed locally.
+
+### Experimental retained reviewer conversation
+
+These options are disabled by default. Add them to the trusted user configuration
+at `~/.pi/agent/extensions/pi-auto-review/config.json`, alongside your reviewer model:
+
+```json
+{
+  "retainedContext": true,
+  "reviewerConversation": true,
+  "investigationTools": true,
+  "maxTokens": 4096,
+  "maxReviewerInputTokens": 8192,
+  "timeoutMs": 240000
+}
+```
+
+`retainedContext` selects whole original user messages from the active session
+branch, newest first, within an 8 KiB user-text budget. Up to 2 KiB of nearby
+assistant replies preserves context for replies such as “yes”. Omissions are
+reported to the reviewer; summaries never replace original user permission.
+This uses Pi's retained branch records and does not change Pi compaction.
+
+`reviewerConversation` keeps a separate in-memory conversation per parent
+session. New original evidence and each action are appended; prior verdicts do
+not grant permission. Concurrent reviews fork committed history. Branch edits,
+reviewer settings and model changes invalidate reuse. A final parent-history
+check prevents committing a decision after the user changes the conversation.
+
+When the reviewer input budget fills, old verdicts and inspection results are
+discarded and the conversation is rebuilt from original evidence. If original
+user instructions cannot be reconstructed within the budget, review defers.
+This is deterministic rollover, not an LLM-generated summary. History does not
+survive restarting Pi. The provider still receives accumulated messages on each
+call; savings depend on server prefix caching.
+
+`investigationTools` supplies one structured tool for workspace file metadata,
+directory listings, bounded text reads and Git status/diffs. It requires the
+sibling `pi-sandbox` package and a working sandbox runtime. Inspection uses fixed
+commands with no network, no workspace writes and no permission escalation.
+Git inspection requires a repository root with a local `.git` directory and
+ignores repository configuration to prevent execution of configured helpers.
+Credential paths and symlink escapes are refused. Tool output remains untrusted.
+The reviewer gets at most four inspection calls within the overall deadline.
+It cannot inspect arbitrary remote hosts or run a general shell.
+
+The experimental loop defers on malformed responses, provider failures and
+exhausted budgets; it does not use the independent reviewer's retry mechanism.
+Filesystem changes between inspection and action execution remain possible.
+Use this mode for evaluation before enabling it in a working environment.
+
+To compare the three modes against an unauthenticated local Chat Completions
+endpoint, copy `test/stateful-model.example.json` and set the server's actual
+model ID, context limit and URL. From this package directory, inside a disposable
+sandbox with the sibling `pi-sandbox` runtime available:
+
+```sh
+TEST_MODEL_FILE=/tmp/reviewer-model.json TEST_RESULTS=/tmp/reviewer-results.jsonl \
+  node --experimental-transform-types --import ./test/register-external-ts.mjs \
+  test/stateful-live.mjs
+```
+
+The test makes 78 reviews across permission changes, branch isolation, retained
+restrictions, conditional cleanup and uploads. Proposed commands are inert
+strings; only inspection tools execute against synthetic fixtures. Raw model
+replies and settings are saved beside the result file. Use a new results path
+for each run. `TEST_INJECTION=1 TEST_MODES=stateful_tools` selects a separate
+two-review test with malicious instructions in an inspected file. Tests do not
+load the user's credentials. A controller failure is not a passing decision.
+
 
 ## Sandbox integration
 

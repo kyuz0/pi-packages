@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { completeSimple, normalizeContext } from "@earendil-works/pi-ai/compat";
+import type { Context } from "@earendil-works/pi-ai/compat";
 import type { BoundaryRequest } from "../broker/index.ts";
 import type { UserReviewUsage } from "../user-feedback.ts";
 import type {
@@ -559,8 +560,9 @@ export async function modelCall(
   timeoutMs: number,
   formatRetry: boolean,
   metadata: ProviderAttemptMetadata,
+  suppliedContext?: Context,
 ): Promise<CompletionMessage> {
-  const context = {
+  const context = suppliedContext ?? {
     systemPrompt: REVIEWER_SYSTEM_PROMPT,
     messages: [
       {
@@ -592,8 +594,9 @@ export async function modelCall(
       metadata.retryAfterMs = parseRetryAfterMs(response.headers);
     },
   };
-  // Call the provider directly with no tools, outside Pi's agent/tool loop,
-  // so using the session model cannot re-enter permission review.
+  // Call the provider outside the parent agent/tool loop, so using the
+  // session model cannot re-enter parent permission review. A supplied
+  // reviewer context may declare its own separately executed inspection tools.
   // 0.86 moved the provider-facing request to a normalized transcript: the
   // system prompt and tool declarations now travel as the transcript's leading
   // system message. Providers registered by extensions receive that shape, so

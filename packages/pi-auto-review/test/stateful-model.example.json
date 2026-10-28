@@ -1,0 +1,23 @@
+{
+  "provider": "reviewer-local",
+  "id": "replace-with-server-model-id",
+  "name": "Local reviewer",
+  "api": "openai-completions",
+  "baseUrl": "http://127.0.0.1:8000/v1",
+  "reasoning": true,
+  "input": [
+    "text"
+  ],
+  "cost": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0
+  },
+  "contextWindow": 16384,
+  "maxTokens": 4096,
+  "compat": {
+    "supportsDeveloperRole": false,
+    "supportsReasoningEffort": true
+  }
+}

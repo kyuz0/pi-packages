@@ -1,0 +1,98 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { complete } from "../src/review/complete.ts";
+import { DEFAULT_CONFIG, validateConfig } from "../src/review/config.ts";
+import { ConversationStore } from "../src/review/conversation-store.ts";
+import { inspectionInvocation } from "../src/review/investigation.ts";
+import type { ReviewerMeta } from "../src/review/types.ts";
+const model: ReviewerMeta["model"]={provider:"fixture",id:"fixture",name:"fixture",api:"openai-completions",baseUrl:"http://unused.invalid/v1",reasoning:false,input:["text"],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:32768,maxTokens:4096};
+const u=(id:string,content:string)=>({id,type:"message",message:{role:"user",content}});
+const request={id:"req",source:"permission-system",surface:"bash_escalated",operation:"execute",command:"git push",fullCommand:"git push",cwd:"/workspace"};
+const allow={outcome:"allow",risk_level:"medium",user_authorization:"high",rationale:"Fixture verdict"};
+const response=(decision=allow)=>({role:"assistant",api:model.api,provider:model.provider,model:model.id,timestamp:Date.now(),stopReason:"stop",content:[{type:"text",text:JSON.stringify(decision)}]});
+function fixture() {
+ let entries=[u("1","Do not publish until I ask.")],session="session",seen:unknown[]=[];
+ const controller=new AbortController();
+ const ctx={cwd:"/workspace",signal:controller.signal,sessionManager:{getSessionId:()=>session,getBranch:()=>entries,buildContextEntries:()=>entries},modelRegistry:{getApiKeyAndHeaders:async()=>({ok:true,apiKey:"fixture"})}} as unknown as ExtensionContext;
+ let next:()=>Promise<unknown>=async()=>response();
+ const streamSimple=((_m:unknown,context:unknown)=>({result:async()=>{seen.push(structuredClone(context));return next();}})) as unknown as NonNullable<ReviewerMeta["streamSimple"]>;
+ const resolve=async()=>({model,streamSimple});
+ return {ctx,seen,controller,resolve,setEntries:(e:typeof entries)=>{entries=e;},add:(text:string)=>entries.push(u(String(entries.length+1),text)),setSession:(s:string)=>{session=s;},setNext:(fn:()=>Promise<unknown>)=>{next=fn;},run:(overrides={})=>complete(ctx,{...DEFAULT_CONFIG,retainedContext:true,reviewerConversation:true,...overrides},request,undefined,resolve)};
+}
+test("reuses reviewer conversation and appends new originals without duplicating admitted text",async()=>{
+ const f=fixture();await f.run();f.add("Publishing is now authorized.");const r=await f.run();
+ assert.equal(r.summary.conversation?.mode,"reused");assert.equal(r.summary.conversation?.committed,true);
+ const wire=JSON.stringify(f.seen.at(-1));assert.equal(wire.split("Do not publish until I ask.").length-1,1);assert.match(wire,/Publishing is now authorized/);assert.match(wire,/Fixture verdict/);
+});
+for(const change of ["branch","same-id-edit","session","configuration"])test(`invalidates reuse for ${change}`,async()=>{
+ const f=fixture();await f.run();
+ if(change==="branch")f.setEntries([u("other","Only inspect")]);
+ if(change==="same-id-edit")f.setEntries([u("1","Only inspect")]);
+ if(change==="session")f.setSession("different");
+ const r=await f.run(change==="configuration"?{investigationTools:true}:{});
+ assert.equal(r.summary.conversation?.mode,"reset");assert.ok(!JSON.stringify(f.seen.at(-1)).includes("Fixture verdict"));
+});
+test("mid-review restriction invalidates allow and does not commit the stale turn",async()=>{
+ const f=fixture();f.setNext(async()=>{f.add("Never publish.");return response();});const r=await f.run();
+ assert.equal(r.decision.outcome,"defer");assert.equal(r.summary.conversation?.committed,false);
+ f.setNext(async()=>response({...allow,outcome:"deny"}));await f.run();assert.ok(!JSON.stringify(f.seen.at(-1)).includes("Fixture verdict"));
+});
+test("failed and cancelled review state never commits",async()=>{
+ for(const kind of ["throw","malformed","abort"]){const f=fixture();f.setNext(async()=>{if(kind==="throw")throw Error("offline");if(kind==="abort")f.controller.abort();return kind==="malformed"?{...response(),content:[{type:"text",text:"oops"}]}:response();});const r=await f.run();assert.equal(r.decision.outcome,"defer");assert.equal(r.summary.conversation?.committed,false);}
+});
+test("parallel review forks committed history and cannot publish over the trunk",async()=>{
+ const f=fixture();await f.run();let release!:()=>void;let entered!:()=>void;
+ const gate=new Promise<void>(r=>{release=r;}),ready=new Promise<void>(r=>{entered=r;});
+ let call=0;f.setNext(async()=>{if(call++===0){entered();await gate;}return response();});
+ const a=f.run();await ready;const b=await f.run();assert.equal(b.summary.conversation?.mode,"fork");assert.equal(b.summary.conversation?.committed,false);release();assert.equal((await a).summary.conversation?.committed,true);
+});
+test("normal parent compaction with original branch retained does not reset the reviewer",async()=>{
+ const f=fixture();await f.run();f.ctx.sessionManager.buildContextEntries=()=>[];f.add("Continue without publishing");const r=await f.run();assert.equal(r.summary.conversation?.mode,"reused");assert.match(JSON.stringify(f.seen.at(-1)),/Do not publish until I ask/);
+});
+test("history rolls over within budget and restores originals instead of verdicts",async()=>{
+ const f=fixture();f.setNext(async()=>response({...allow,rationale:"Evidence checked. ".repeat(30)}));let reset=false;
+ for(let i=0;i<25;i++){const r=await f.run({maxReviewerInputTokens:4096});assert.equal(r.decision.outcome,"allow");if(r.summary.conversation?.mode==="reset"){reset=true;assert.match(JSON.stringify(f.seen.at(-1)),/Do not publish until I ask/);break;}}
+ assert.ok(reset);
+});
+test("unavailable investigation tool cannot be executed",async()=>{
+ const f=fixture();f.setNext(async()=>({...response(),stopReason:"toolUse",content:[{type:"toolCall",id:"bad",name:"bash",arguments:{command:"echo nope"}}]}));const r=await f.run({investigationTools:true});assert.equal(r.decision.outcome,"defer");assert.equal(r.summary.conversation?.committed,false);
+});
+test("independent investigation mode does not reuse messages",async()=>{
+ const f=fixture();await f.run({reviewerConversation:false,investigationTools:true});const r=await f.run({reviewerConversation:false,investigationTools:true});assert.equal(r.summary.conversation?.mode,"independent");assert.ok(!JSON.stringify(f.seen.at(-1)).includes("Fixture verdict"));
+});
+test("new options require original context and reject non-booleans",()=>{
+ assert.throws(()=>validateConfig({reviewerConversation:true},"test"));assert.throws(()=>validateConfig({retainedContext:true,investigationTools:"yes"},"test"));
+ assert.equal(validateConfig({retainedContext:true,reviewerConversation:true,investigationTools:true},"test").reviewerConversation,true);
+});
+test("inspection rejects traversal, credentials, shell options and escaping symlinks",()=>{
+ const cwd=mkdtempSync(join(tmpdir(),"reviewer-path-test-"));writeFileSync(join(cwd,"safe.txt"),"ok");symlinkSync("/etc",join(cwd,"escape"));
+ for(const args of [{operation:"read",path:"../outside"},{operation:"read",path:".env"},{operation:"read",path:".ssh/id_ed25519"},{operation:"read",path:"escape/passwd"},{operation:"shell",path:"."},{operation:"list",path:".",command:"whoami"},{operation:"git_diff",path:"."}])assert.throws(()=>inspectionInvocation(cwd,args));
+ assert.equal(inspectionInvocation(cwd,{operation:"read",path:"safe.txt"}).command,"/usr/bin/python3");
+});
+test("an invalidated store lease cannot overwrite a newer configuration",()=>{
+ const store=new ConversationStore(),owner={};const old=store.acquire(owner,"a",[],true);const fresh=store.acquire(owner,"b",[],true);assert.equal(old.commit([],new Set()),false);assert.equal(fresh.commit([],new Set()),true);
+});
+
+test("controller failures are distinct from a valid model deferral", async () => {
+ const f=fixture();f.setNext(async()=>({...response(),content:[{type:"text",text:"not JSON"}]}));
+ const invalid=await f.run();assert.equal(invalid.summary.controllerFailure,"Reviewer returned an invalid decision.");
+ f.setNext(async()=>response({...allow,outcome:"defer",rationale:"The deletion target is unknown."}));
+ const valid=await f.run();assert.equal(valid.decision.outcome,"defer");assert.equal(valid.summary.controllerFailure,undefined);
+});
+test("provider output exhaustion fails closed without committing partial history", async () => {
+ const f=fixture();f.setNext(async()=>({...response(),stopReason:"length"}));const r=await f.run();
+ assert.equal(r.decision.outcome,"defer");assert.equal(r.summary.errorCounts.output_limit,1);assert.equal(r.summary.conversation?.committed,false);
+});
+test("a provider that never resolves is bounded by the shared deadline", async () => {
+ const f=fixture();f.setNext(()=>new Promise(()=>{}));const started=Date.now();const r=await f.run({timeoutMs:1000});
+ assert.equal(r.decision.outcome,"defer");assert.equal(r.summary.errorCounts.abort,1);assert.ok(Date.now()-started<5000);assert.equal(r.summary.conversation?.committed,false);
+});
+test("an unavailable provider does not make the next review lose original restrictions", async () => {
+ const f=fixture();await f.run();f.add("Publishing is now forbidden.");f.setNext(async()=>{throw Error("offline");});await f.run();
+ f.setNext(async()=>response({...allow,outcome:"deny"}));const r=await f.run();
+ assert.equal(r.decision.outcome,"deny");assert.match(JSON.stringify(f.seen.at(-1)),/Publishing is now forbidden/);
+});

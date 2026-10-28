@@ -15,6 +15,8 @@ import type { PolicyAuditConfig } from "../policy-audit/index.ts";
 
 export const DEFAULT_CONFIG: Config = {
   retainedContext: false,
+  reviewerConversation: false,
+  investigationTools: false,
   model: "codex-auto-review",
   reasoning: "low",
   timeoutMs: 90_000,
@@ -39,6 +41,8 @@ export function validateConfig(value: unknown, source: string): Config {
   const raw = value as Partial<Config> & Record<string, unknown>;
   const allowedKeys = new Set([
     "retainedContext",
+    "reviewerConversation",
+    "investigationTools",
     "model",
     "reasoning",
     "timeoutMs",
@@ -62,6 +66,10 @@ export function validateConfig(value: unknown, source: string): Config {
   }
   const config = { ...DEFAULT_CONFIG, ...raw };
   if (typeof config.retainedContext !== "boolean") throw new Error("retainedContext must be boolean");
+  for (const key of ["reviewerConversation", "investigationTools"] as const) {
+    if (typeof config[key] !== "boolean") throw new Error(`${key} must be boolean`);
+    if (config[key] && !config.retainedContext) throw new Error(`${key} requires retainedContext`);
+  }
   config.policyAudit = {
     ...DEFAULT_CONFIG.policyAudit,
     ...(raw.policyAudit as Partial<PolicyAuditConfig> | undefined),

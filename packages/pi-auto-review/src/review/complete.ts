@@ -1,4 +1,5 @@
 import { withRetainedContext, retainedSnapshot } from "./retained-context.ts";
+import { completeConversation } from "./conversation.ts";
 import {
   ReviewExecutionError,
 } from "./types.ts";
@@ -128,6 +129,9 @@ export async function complete(
     };
   }
   const deadlineAt = started + config.timeoutMs;
+  if (config.reviewerConversation || config.investigationTools) {
+    return completeConversation({ ctx, config, request, transcript, preflight, sharedContext, started, resolve, observe });
+  }
   const controller = new AbortController();
   const onSessionAbort = () => controller.abort();
   if (ctx.signal?.aborted) controller.abort();

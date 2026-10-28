@@ -8,7 +8,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Writable } from "node:stream";
-import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import type { NetworkEndpoint } from "./approval.ts";
 import { resolveBrokerExecPath } from "./runtime.ts";
@@ -139,10 +138,10 @@ function killProcessTree(child: ChildProcess): void {
   }
 }
 
-function commandInvocation(options: SandboxCommandOptions): {
+async function commandInvocation(options: SandboxCommandOptions): Promise<{
   argv: string[];
   commandFromStdin: boolean;
-} {
+}> {
   if (options.directInvocation) {
     return {
       argv: [
@@ -152,6 +151,9 @@ function commandInvocation(options: SandboxCommandOptions): {
       commandFromStdin: false,
     };
   }
+  // Direct invocations need no coding-agent initialization (which can replace
+  // the embedding application's HTTP dispatcher during a model/tool loop).
+  const { getShellConfig } = await import("@earendil-works/pi-coding-agent");
   const shell = getShellConfig(options.shellPath);
   const commandFromStdin = shell.commandTransport === "stdin";
   return {
@@ -192,7 +194,7 @@ export async function runSandboxedCommand(
   }
   if (options.signal?.aborted) throw new Error("aborted");
 
-  const invocation = commandInvocation(options);
+  const invocation = await commandInvocation(options);
   let policy = options.policy ?? createDefaultPolicy(options.cwd);
   let brokerEnv = options.env ?? process.env;
   // Give every sandboxed command a private, writable temp dir (see

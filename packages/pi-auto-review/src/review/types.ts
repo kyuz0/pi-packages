@@ -18,6 +18,8 @@ export type BoundedSurface = "external_directory" | "path";
 
 export type Config = {
   retainedContext?: boolean;
+  reviewerConversation?: boolean;
+  investigationTools?: boolean;
   /** Model id, provider/model, or "current" for the live Pi session model. */
   model: string;
   reasoning: ReasoningLevel;
@@ -124,6 +126,9 @@ export type ReviewPreflight = {
 };
 
 export type ReviewExecutionSummary = {
+  /** Controller failure, distinct from a valid model decision to defer. */
+  controllerFailure?: string;
+  conversation?: { mode: "independent" | "fresh" | "reused" | "fork" | "reset"; rounds: number; investigations: number; committed: boolean; historyMessages: number };
   attempts: ReviewAttemptObservation[];
   errorCounts: Partial<Record<Exclude<ReviewErrorClass, "none">, number>>;
   durationMs: number;
