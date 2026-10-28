@@ -69,6 +69,7 @@ export type TranscriptConfig = {
 };
 
 export type TranscriptResult = {
+  retainedContext?: import("./review/retained-context.ts").RetainedContext;
   text: string;
   surfaceProfile: EvidenceSurfaceProfile;
   reviewerEvidence: {

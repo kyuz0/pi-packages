@@ -1070,14 +1070,14 @@ test("real permission-system authorizer chain integration", async (t) => {
       assert.equal(context.messages.length, 2);
       assert.ok(Buffer.byteLength(context.systemPrompt, "utf8") < config().maxReviewerInputTokens);
       assert.equal(context.systemPrompt.match(/"outcome"/g)?.length, 1);
-      assert.match(context.systemPrompt, /\$HOME/);
+      assert.match(context.systemPrompt, /home directory itself/);
       assert.match(
         context.systemPrompt,
-        /Named \/home\/\.\.\. paths are not a home wipe/,
+        /narrow verified empty-directory deletion is usually low\/medium/,
       );
       assert.match(
         context.systemPrompt,
-        /Allow high only with medium\/high user\s+authorization and narrow scope; else defer/,
+        /Allow high only with medium\/high authorization and narrow scope/,
       );
       assert.doesNotMatch(
         context.systemPrompt,

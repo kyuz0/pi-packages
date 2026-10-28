@@ -1,3 +1,4 @@
+import { withRetainedContext, retainedSnapshot } from "./retained-context.ts";
 import {
   ReviewExecutionError,
 } from "./types.ts";
@@ -63,7 +64,9 @@ export async function complete(
   observe?: (event: ReviewerTelemetryEvent) => void,
 ): Promise<ReviewResult> {
   const started = Date.now();
-  const selectedTranscript = buildClassifierTranscript(
+  const rawBranch = config.retainedContext ? ctx.sessionManager.getBranch() : undefined;
+  const snapshot = rawBranch ? retainedSnapshot(ctx.sessionManager.getSessionId(), rawBranch) : undefined;
+  const legacyTranscript = buildClassifierTranscript(
     ctx.sessionManager.buildContextEntries(),
     config,
     {
@@ -72,6 +75,7 @@ export async function complete(
         reviewerContext?.userOverride?.originalRequestId,
     },
   );
+  const selectedTranscript = rawBranch ? withRetainedContext(legacyTranscript, rawBranch) : legacyTranscript;
   const transcript = applyReviewerInputBudget(
     request,
     selectedTranscript,
@@ -94,7 +98,9 @@ export async function complete(
   // incomplete expansion must reach the human terminal, even with a trusted
   // reviewer-retry override. The older display-truncation fallback can still
   // be lifted by that override.
-  const deferralReason = commandExpansionLimitExceeded(request)
+  const deferralReason = transcript.retainedContext?.omittedNewestUserMessage
+    ? "The newest user message cannot fit intact in the review context; a human must decide."
+    : commandExpansionLimitExceeded(request)
     ? "Nested command expansion exceeds the local scan budget; a human must decide."
     : reviewerRequestView(request).fullCommandTruncated && !reviewerContext?.userOverride
       ? "The complete command exceeds the reviewer input bound and was truncated; a human must decide."
@@ -253,6 +259,9 @@ export async function complete(
         }
         try {
           decision = parseDecision(text);
+          if (decision.outcome === "allow" && snapshot && snapshot !== retainedSnapshot(ctx.sessionManager.getSessionId(), ctx.sessionManager.getBranch())) {
+            decision = { outcome: "defer", risk_level: "high", user_authorization: "unknown", rationale: "The session changed during review; review the action again with current instructions." };
+          }
         } catch (error) {
           status = "format_error";
           errorClass = parseErrorClass(error);

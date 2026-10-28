@@ -162,6 +162,7 @@ export function sharedReviewContext(
 ): string {
   return canonicalReviewerJson({
     evidence: {
+      ...(transcript.retainedContext ? { retainedContext: transcript.retainedContext } : {}),
       relevantResults: {
         items: transcript.reviewerEvidence.relevantResults,
         trust: "untrusted",
@@ -309,7 +310,8 @@ export function reviewPreflight(
       : "",
   );
   const user = combinedPreflightPart(
-    transcript.reviewerEvidence.userMessages.map((item) => item.content),
+    [...transcript.reviewerEvidence.userMessages.map((item) => item.content),
+      ...(transcript.retainedContext?.messages.filter(m => m.role === "user").map(m => m.content) ?? [])],
   );
   const tool = combinedPreflightPart(
     transcript.reviewerEvidence.toolCalls.map((item) => item.content),
@@ -366,6 +368,7 @@ export function cloneTranscript(transcript: TranscriptResult): TranscriptResult 
     }));
   return {
     ...transcript,
+    ...(transcript.retainedContext ? { retainedContext: structuredClone(transcript.retainedContext) } : {}),
     reviewerEvidence: {
       userMessages: cloneItems(transcript.reviewerEvidence.userMessages),
       toolCalls: cloneItems(transcript.reviewerEvidence.toolCalls),
@@ -437,6 +440,16 @@ export function applyReviewerInputBudget(
   };
   if (estimatedTokens() <= maxReviewerInputTokens) return transcript;
 
+  if (transcript.retainedContext) {
+    const retained = transcript.retainedContext;
+    const assistants = retained.messages.filter(m => m.role === "assistant");
+    for (const assistant of assistants) {
+      retained.messages = retained.messages.filter(m => m !== assistant);
+      retained.omittedAssistantMessages++;
+      transcript.truncated = true;
+      if (estimatedTokens() <= maxReviewerInputTokens) return transcript;
+    }
+  }
   let secondaryReasonCount = 0;
   for (const item of [
     ...transcript.reviewerEvidence.userMessages,
