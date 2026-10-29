@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { complete } from "../src/review/complete.ts";
-import { DEFAULT_CONFIG } from "../src/review/config.ts";
+import { DEFAULT_CONFIG as PRODUCTION_DEFAULT_CONFIG } from "../src/review/config.ts";
+const DEFAULT_CONFIG = {...PRODUCTION_DEFAULT_CONFIG, reviewerConversation:false};
 import type { ReviewerMeta } from "../src/review/types.ts";
 const model: ReviewerMeta["model"]={provider:"fixture",id:"fixture",name:"fixture",api:"openai-completions",baseUrl:"http://unused.invalid/v1",reasoning:false,input:["text"],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:32768,maxTokens:4096};
 const u=(id:string,content:string)=>({id,type:"message",message:{role:"user",content}});
@@ -34,7 +35,7 @@ test("compacted model view keeps raw user messages in the actual provider reques
 test("legacy mode does not require or read raw branch API",async()=>{
  const ctx={sessionManager:{getSessionId:()=>"s",getBranch:()=>{throw Error("must not read");},buildContextEntries:()=>[u("1","Run tests")]},modelRegistry:{getApiKeyAndHeaders:async()=>({ok:true,apiKey:"fixture"})}} as unknown as ExtensionContext;
  const streamSimple=(()=>({result:async()=>({stopReason:"stop",content:[{type:"text",text:JSON.stringify(decision)}]})})) as unknown as NonNullable<ReviewerMeta["streamSimple"]>;
- const result=await complete(ctx,DEFAULT_CONFIG,request,undefined,async()=>({model,streamSimple}));assert.equal(result.decision.outcome,"allow");
+ const result=await complete(ctx,{...DEFAULT_CONFIG,retainedContext:false},request,undefined,async()=>({model,streamSimple}));assert.equal(result.decision.outcome,"allow");
 });
 
 test("omitted latest user instruction defers before calling a model",async()=>{

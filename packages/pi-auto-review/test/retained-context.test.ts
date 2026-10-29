@@ -73,8 +73,8 @@ test("budget removes assistant context before user restrictions without mutating
  assert.equal(result.retainedContext?.messages.filter(m=>m.role==="user").length,1);
  assert.equal(source.retainedContext?.messages.length,2);assert.equal(result.failureCode,"reviewer_input_budget_exceeded");
 });
-test("context mode is opt-in, validated, and no keyword-based permission inference",()=>{
- assert.equal(DEFAULT_CONFIG.retainedContext,false);
+test("context mode is enabled by default, validated, and no keyword-based permission inference",()=>{
+ assert.equal(DEFAULT_CONFIG.retainedContext,true);
  assert.equal(validateConfig({retainedContext:true},"test").retainedContext,true);
  assert.throws(()=>validateConfig({retainedContext:"true"},"test"));
  const c=retainContext([u("1","request-123 approved")]);

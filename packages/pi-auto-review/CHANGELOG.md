@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Use a separate reviewer conversation with retained original user context by default.
+- Keep review history isolated across sessions, branches and concurrent requests; reject stale results.
+- Review without inspection tools and fail closed on invalid replies or missing required evidence.
+- Allow up to 4,096 output tokens and a ten-minute review deadline for local reasoning models.
+
 ## 0.26.1 - 2026-10-13
 
 - Fix Pi 1.2.0 compatibility: pass an explicit `{ deliverAs: "followUp" }` to both

@@ -22,10 +22,11 @@ function makeTempDir(prefix: string): string {
   return mkdtempSync(join(TEST_TMP_ROOT, prefix));
 }
 
-test("trusted configuration supports four-minute reviews without loosening project limits", () => {
+test("trusted configuration supports ten-minute review deadlines without loosening project limits", () => {
   const trusted = applyUserConfig(loadConfig(), { timeoutMs: 240_000 });
   assert.equal(trusted.timeoutMs, 240_000);
-  assert.throws(() => applyUserConfig(loadConfig(), { timeoutMs: 240_001 }));
+  assert.equal(applyUserConfig(loadConfig(), { timeoutMs: 600_000 }).timeoutMs, 600_000);
+  assert.throws(() => applyUserConfig(loadConfig(), { timeoutMs: 600_001 }));
   assert.equal(applyProjectConfig(trusted, { timeoutMs: 120_000 }).timeoutMs, 120_000);
   assert.throws(() => applyProjectConfig({ ...trusted, timeoutMs: 120_000 }, { timeoutMs: 240_000 }));
 });
@@ -91,7 +92,7 @@ test("project config can only tighten trusted settings and is frozen", () => {
 test("user config can fully overlay package trusted settings", () => {
   const packageConfig = loadConfig();
   assert.equal(packageConfig.model, "codex-auto-review");
-  assert.equal(packageConfig.maxTokens, 256);
+  assert.equal(packageConfig.maxTokens, 4096);
   assert.equal(packageConfig.maxReviewerInputTokens, 8_192);
   assert.equal(packageConfig.breakGlassEnabled, true);
   const effective = applyUserConfig(packageConfig, {

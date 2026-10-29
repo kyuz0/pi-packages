@@ -1,13 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { complete } from "../src/review/complete.ts";
 import { DEFAULT_CONFIG, validateConfig } from "../src/review/config.ts";
 import { ConversationStore } from "../src/review/conversation-store.ts";
-import { inspectionInvocation } from "../src/review/investigation.ts";
 import type { ReviewerMeta } from "../src/review/types.ts";
 const model: ReviewerMeta["model"]={provider:"fixture",id:"fixture",name:"fixture",api:"openai-completions",baseUrl:"http://unused.invalid/v1",reasoning:false,input:["text"],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:32768,maxTokens:4096};
 const u=(id:string,content:string)=>({id,type:"message",message:{role:"user",content}});
@@ -33,7 +29,7 @@ for(const change of ["branch","same-id-edit","session","configuration"])test(`in
  if(change==="branch")f.setEntries([u("other","Only inspect")]);
  if(change==="same-id-edit")f.setEntries([u("1","Only inspect")]);
  if(change==="session")f.setSession("different");
- const r=await f.run(change==="configuration"?{investigationTools:true}:{});
+ const r=await f.run(change==="configuration"?{reasoning:"off"}:{});
  assert.equal(r.summary.conversation?.mode,"reset");assert.ok(!JSON.stringify(f.seen.at(-1)).includes("Fixture verdict"));
 });
 test("mid-review restriction invalidates allow and does not commit the stale turn",async()=>{
@@ -59,19 +55,20 @@ test("history rolls over within budget and restores originals instead of verdict
  assert.ok(reset);
 });
 test("unavailable investigation tool cannot be executed",async()=>{
- const f=fixture();f.setNext(async()=>({...response(),stopReason:"toolUse",content:[{type:"toolCall",id:"bad",name:"bash",arguments:{command:"echo nope"}}]}));const r=await f.run({investigationTools:true});assert.equal(r.decision.outcome,"defer");assert.equal(r.summary.conversation?.committed,false);
+ const f=fixture();f.setNext(async()=>({...response(),stopReason:"toolUse",content:[{type:"toolCall",id:"bad",name:"bash",arguments:{command:"echo nope"}}]}));const r=await f.run();assert.equal(r.decision.outcome,"defer");assert.equal(r.summary.conversation?.committed,false);
 });
-test("independent investigation mode does not reuse messages",async()=>{
- const f=fixture();await f.run({reviewerConversation:false,investigationTools:true});const r=await f.run({reviewerConversation:false,investigationTools:true});assert.equal(r.summary.conversation?.mode,"independent");assert.ok(!JSON.stringify(f.seen.at(-1)).includes("Fixture verdict"));
+test("production defaults retain originals, reuse reviews and reject inspection tools",()=>{
+ const config=validateConfig({},"test");
+ assert.equal(config.retainedContext,true);assert.equal(config.reviewerConversation,true);assert.equal(config.investigationTools,false);
+ assert.throws(()=>validateConfig({retainedContext:false},"test"),/requires retainedContext/);
+ assert.throws(()=>validateConfig({investigationTools:true},"test"),/not supported/);
+ assert.throws(()=>validateConfig({investigationTools:"yes"},"test"),/boolean/);
 });
-test("new options require original context and reject non-booleans",()=>{
- assert.throws(()=>validateConfig({reviewerConversation:true},"test"));assert.throws(()=>validateConfig({retainedContext:true,investigationTools:"yes"},"test"));
- assert.equal(validateConfig({retainedContext:true,reviewerConversation:true,investigationTools:true},"test").reviewerConversation,true);
-});
-test("inspection rejects traversal, credentials, shell options and escaping symlinks",()=>{
- const cwd=mkdtempSync(join(tmpdir(),"reviewer-path-test-"));writeFileSync(join(cwd,"safe.txt"),"ok");symlinkSync("/etc",join(cwd,"escape"));
- for(const args of [{operation:"read",path:"../outside"},{operation:"read",path:".env"},{operation:"read",path:".ssh/id_ed25519"},{operation:"read",path:"escape/passwd"},{operation:"shell",path:"."},{operation:"list",path:".",command:"whoami"},{operation:"git_diff",path:"."}])assert.throws(()=>inspectionInvocation(cwd,args));
- assert.equal(inspectionInvocation(cwd,{operation:"read",path:"safe.txt"}).command,"/usr/bin/python3");
+test("default review exposes no tools even if a caller bypasses configuration validation",async()=>{
+ const f=fixture();await f.run({investigationTools:true});
+ assert.ok(!JSON.stringify(f.seen.at(-1)).includes('"tools":'));
+ f.setNext(async()=>({...response(),stopReason:"toolUse",content:[{type:"toolCall",id:"bad",name:"inspect_workspace",arguments:{operation:"read",path:"report.txt"}}]}));
+ const r=await f.run({investigationTools:true});assert.equal(r.decision.outcome,"defer");assert.equal(r.summary.conversation?.investigations,0);
 });
 test("an invalidated store lease cannot overwrite a newer configuration",()=>{
  const store=new ConversationStore(),owner={};const old=store.acquire(owner,"a",[],true);const fresh=store.acquire(owner,"b",[],true);assert.equal(old.commit([],new Set()),false);assert.equal(fresh.commit([],new Set()),true);

@@ -102,6 +102,9 @@ function reviewerTranscript(modelContext: unknown): {
 function config(overrides: Partial<Config> = {}): Config {
   return {
     ...loadConfig(),
+    // Legacy selector/retry contracts are tested explicitly in independent mode.
+    retainedContext: false,
+    reviewerConversation: false,
     retries: 0,
     timeoutMs: 1_000,
     // Ordinary extension tests must never open or migrate the operator's DB.
@@ -773,6 +776,28 @@ test("automatic authorizer spellings reach policy audit without a UI prompt", as
     else process.env.HOME = previousHome;
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("production conversation default crosses the real permission authorizer chain", async () => {
+  const instance = harness(allow, { config: config({
+    retainedContext: loadConfig().retainedContext,
+    reviewerConversation: loadConfig().reviewerConversation,
+  }), contextEntries: [{ message: { role: "user", content: "Keep changes local until I ask you to publish." } }] });
+  try {
+    const before = instance.context.sessionManager.buildContextEntries();
+    assert.equal((await instance.authorize("bash_escalated")).decision.approved, true);
+    instance.context.sessionManager.appendMessage({ role: "user", content: "Continue editing the documentation.", timestamp: Date.now() });
+    assert.equal((await instance.authorize("bash_escalated")).decision.approved, true);
+    assert.equal(instance.modelContexts.length, 2);
+    const second = instance.modelContexts[1] as { messages: Parameters<typeof getCurrentTools>[0] };
+    assert.match(JSON.stringify(second), /Keep changes local until I ask you to publish/);
+    assert.match(JSON.stringify(second), /Continue editing the documentation/);
+    assert.match(JSON.stringify(second), /parentOriginalMessages/);
+    assert.deepEqual(getCurrentTools(second.messages), []);
+    assert.equal(instance.context.sessionManager.buildContextEntries().length, before.length + 1);
+    assert.deepEqual(instance.sentUserMessages, []);
+    assert.equal(instance.modelCallOptions[0].sessionId, instance.modelCallOptions[1].sessionId);
+  } finally { instance.dispose(); }
 });
 
 test("real permission-system authorizer chain integration", async (t) => {

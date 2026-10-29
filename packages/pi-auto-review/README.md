@@ -186,8 +186,11 @@ Package defaults:
 {
   "model": "codex-auto-review",
   "reasoning": "low",
-  "timeoutMs": 90000,
-  "maxTokens": 256,
+  "retainedContext": true,
+  "reviewerConversation": true,
+  "investigationTools": false,
+  "timeoutMs": 600000,
+  "maxTokens": 4096,
   "retries": 2,
   "maxUserTranscriptTokens": 1200,
   "maxToolTranscriptTokens": 1200,
@@ -221,19 +224,18 @@ extend retention.
 
 ### Deadlines and retries
 
-`timeoutMs` accepts 1,000–240,000 milliseconds. It is one deadline shared by
-model resolution, authentication, model
-attempts, and retry delays. Each attempt receives only the remaining time.
-Provider-internal retries are disabled, and a review makes at most two actual
-model calls even when the public `retries` value is higher.
+`timeoutMs` accepts 1,000–600,000 milliseconds. This is a maximum deadline,
+not an expected response time. It covers model resolution, authentication and
+the model response. Provider-internal retries are disabled.
 
-Valid decisions, output-length stops, timeouts, aborts, authentication/model/
-request errors, and unknown failures do not retry. Empty, non-JSON, or
-schema-invalid output and recognized connection, temporary 5xx, or 429
-failures may retry once when the retry budget and deadline allow it. A
-`Retry-After` above five seconds or beyond the remaining deadline fails closed.
-Format retries preserve the canonical request and selected evidence and append
-only a fixed, budget-checked schema correction.
+The default conversation mode makes one model call per approval. Invalid
+output, unexpected tool calls, cancellation and provider failures never grant
+permission and do not commit a turn to reviewer history.
+
+The optional independent mode (`reviewerConversation: false`) can retry once
+for malformed output or recognized transient connection, 5xx and 429 errors,
+within the same deadline. Valid decisions, output exhaustion, timeouts and
+authentication errors are never retried. `retries` applies only to this mode.
 
 ## Operator feedback and exact retry
 
@@ -339,24 +341,24 @@ Grants expire after `grantTtlMs` and cannot be reused.
 
 ## Reviewer context and token budgets
 
-By default, the reviewer receives one compact canonical request plus bounded,
-explicitly untrusted evidence. Selection is deterministic rather than semantic:
+The default reviewer conversation combines original user messages, the exact
+proposed action and selected tool evidence. Original instructions come from
+Pi's active session branch, including messages preceding compaction; they do
+not need to mention an internal request ID. See [Reviewer conversation](#reviewer-conversation)
+for retention limits and reuse.
 
-- the latest raw user message is the authorization anchor;
-- older user messages require an exact request/tool/requester association or an
-  exact trusted retry;
-- tool calls require an exact tool-call ID, exact structured request fields, a
-  surface profile, or a security-combination classification; and
-- selected results stay paired with their producer and are limited to exact
-  results, deletion prechecks, Git push context, matching branch protection,
-  and Sandbox Runtime process evidence.
+Tool evidence is selected deterministically: exact tool-call/request linkage,
+relevant surface profiles, deletion prechecks, Git push context, matching
+branch protection and Sandbox Runtime process evidence. Selected results stay
+paired with their producer. Unrelated tool output is excluded. Compaction and
+branch summaries are context, never substitutes for user authorization.
 
-Unrelated reads, directory listings, builds, tests, assistant prose, and old
-task history are excluded. Compaction and branch summaries are labeled as
-non-authorization context and are never injected as user intent. The host does
-not rewrite a model allow from regex matches on user text, vague continuations,
-or a computed authorization ceiling; those judgments stay with the reviewer
-model. Hard denies still terminate before the model.
+The reviewer model judges permission from this evidence. The host does not
+reinterpret user text with keyword-based permission rules; deterministic hard
+denies still terminate before the model. The optional legacy selector
+(`retainedContext: false`, `reviewerConversation: false`) uses the latest user
+message and older messages associated with the request instead of original
+branch history.
 
 The current operation appears once as stable, key-sorted JSON. Duplicate exact
 tool-call arguments collapse to an ID/name/reason linkage shell, while fields
@@ -378,60 +380,42 @@ surface profile. If mandatory evidence does not fit, review fails closed before
 calling the model. More than four security-combination candidates also fails
 closed locally.
 
-### Experimental retained reviewer conversation
+### Reviewer conversation
 
-These options are disabled by default. Add them to the trusted user configuration
-at `~/.pi/agent/extensions/pi-auto-review/config.json`, alongside your reviewer model:
+Automatic reviews use a separate conversation with the selected reviewer model.
+The reviewer receives the proposed action and original user instructions from
+Pi's active session branch. Later instructions can revise permission; a vague
+“continue” does not cancel an earlier restriction. Previous reviewer decisions
+are not user permission.
 
-```json
-{
-  "retainedContext": true,
-  "reviewerConversation": true,
-  "investigationTools": true,
-  "maxTokens": 4096,
-  "maxReviewerInputTokens": 8192,
-  "timeoutMs": 240000
-}
-```
+The reviewer has **no tools**: it cannot read files, run commands or make network
+requests. It decides from the supplied context. Missing consequential evidence,
+invalid replies and provider failures do not grant permission. The conversation
+path makes one model request per review, without format retries.
 
-`retainedContext` selects whole original user messages from the active session
-branch, newest first, within an 8 KiB user-text budget. Up to 2 KiB of nearby
-assistant replies preserves context for replies such as “yes”. Omissions are
-reported to the reviewer; summaries never replace original user permission.
-This uses Pi's retained branch records and does not change Pi compaction.
+Original user messages are retained whole within an 8 KiB text budget, with up
+to 2 KiB of nearby assistant replies for context. Pi's compaction summaries do
+not replace the original user instructions. Omissions are reported; a bounded
+window cannot guarantee enforcement of an instruction that is absent.
 
-`reviewerConversation` keeps a separate in-memory conversation per parent
-session. New original evidence and each action are appended; prior verdicts do
-not grant permission. Concurrent reviews fork committed history. Branch edits,
-reviewer settings and model changes invalidate reuse. A final parent-history
-check prevents committing a decision after the user changes the conversation.
+New messages and actions are added to the reviewer's history. Parallel reviews
+use private forks; branch edits, model changes and configuration changes reset
+reuse. Before accepting a result, the controller checks that the parent history
+has not changed. When the input budget fills, it discards old review turns and
+rebuilds from original instructions, or defers if those cannot fit. This is not
+an additional LLM summary. Reviewer history is in memory and resets on Pi restart.
+The provider still receives the accumulated messages; latency depends on the
+model, output length and provider caching.
 
-When the reviewer input budget fills, old verdicts and inspection results are
-discarded and the conversation is rebuilt from original evidence. If original
-user instructions cannot be reconstructed within the budget, review defers.
-This is deterministic rollover, not an LLM-generated summary. History does not
-survive restarting Pi. The provider still receives accumulated messages on each
-call; savings depend on server prefix caching.
+Defaults are `retainedContext: true`, `reviewerConversation: true` and
+`investigationTools: false`. Inspection tools cannot be enabled. Trusted user
+configuration may select independent reviews with `reviewerConversation: false`;
+project configuration cannot disable context handling or change the reviewer.
+The 4,096-token output ceiling and ten-minute deadline accommodate local
+reasoning models; these are limits, not expected response times.
 
-`investigationTools` supplies one structured tool for workspace file metadata,
-directory listings, bounded text reads and Git status/diffs. It requires the
-sibling `pi-sandbox` package and a working sandbox runtime. Inspection uses fixed
-commands with no network, no workspace writes and no permission escalation.
-Git inspection requires a repository root with a local `.git` directory and
-ignores repository configuration to prevent execution of configured helpers.
-Credential paths and symlink escapes are refused. Tool output remains untrusted.
-The reviewer gets at most four inspection calls within the overall deadline.
-It cannot inspect arbitrary remote hosts or run a general shell.
-
-The experimental loop defers on malformed responses, provider failures and
-exhausted budgets; it does not use the independent reviewer's retry mechanism.
-Filesystem changes between inspection and action execution remain possible.
-Use this mode for evaluation before enabling it in a working environment.
-
-To compare the three modes against an unauthenticated local Chat Completions
-endpoint, copy `test/stateful-model.example.json` and set the server's actual
-model ID, context limit and URL. From this package directory, inside a disposable
-sandbox with the sibling `pi-sandbox` runtime available:
+The reusable sequence check submits inert action strings and never executes
+those actions. Set the actual endpoint and model in `test/stateful-model.example.json`:
 
 ```sh
 TEST_MODEL_FILE=/tmp/reviewer-model.json TEST_RESULTS=/tmp/reviewer-results.jsonl \
@@ -439,14 +423,9 @@ TEST_MODEL_FILE=/tmp/reviewer-model.json TEST_RESULTS=/tmp/reviewer-results.json
   test/stateful-live.mjs
 ```
 
-The test makes 78 reviews across permission changes, branch isolation, retained
-restrictions, conditional cleanup and uploads. Proposed commands are inert
-strings; only inspection tools execute against synthetic fixtures. Raw model
-replies and settings are saved beside the result file. Use a new results path
-for each run. `TEST_INJECTION=1 TEST_MODES=stateful_tools` selects a separate
-two-review test with malicious instructions in an inspected file. Tests do not
-load the user's credentials. A controller failure is not a passing decision.
-
+It covers permission changes, revocation, parent compaction, branch isolation
+and missing evidence in 26 reviews. Use a fresh results path. Raw replies and
+settings are saved beside the results; controller failures are not passing decisions.
 
 ## Sandbox integration
 

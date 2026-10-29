@@ -14,13 +14,13 @@ import type {
 import type { PolicyAuditConfig } from "../policy-audit/index.ts";
 
 export const DEFAULT_CONFIG: Config = {
-  retainedContext: false,
-  reviewerConversation: false,
+  retainedContext: true,
+  reviewerConversation: true,
   investigationTools: false,
   model: "codex-auto-review",
   reasoning: "low",
-  timeoutMs: 90_000,
-  maxTokens: 256,
+  timeoutMs: 600_000,
+  maxTokens: 4096,
   retries: 2,
   maxUserTranscriptTokens: 1_200,
   maxToolTranscriptTokens: 1_200,
@@ -70,6 +70,7 @@ export function validateConfig(value: unknown, source: string): Config {
     if (typeof config[key] !== "boolean") throw new Error(`${key} must be boolean`);
     if (config[key] && !config.retainedContext) throw new Error(`${key} requires retainedContext`);
   }
+  if (config.investigationTools) throw new Error("Reviewer inspection tools are not supported");
   config.policyAudit = {
     ...DEFAULT_CONFIG.policyAudit,
     ...(raw.policyAudit as Partial<PolicyAuditConfig> | undefined),
@@ -94,9 +95,9 @@ export function validateConfig(value: unknown, source: string): Config {
   if (
     !Number.isInteger(config.timeoutMs) ||
     config.timeoutMs < 1_000 ||
-    config.timeoutMs > 240_000
+    config.timeoutMs > 600_000
   ) {
-    throw new Error(`${EXTENSION_NAME}: timeoutMs must be 1000..240000`);
+    throw new Error(`${EXTENSION_NAME}: timeoutMs must be 1000..600000`);
   }
   if (
     !Number.isInteger(config.maxTokens) ||

@@ -1,8 +1,8 @@
 {
   "model": "codex-auto-review",
   "reasoning": "low",
-  "timeoutMs": 90000,
-  "maxTokens": 256,
+  "timeoutMs": 600000,
+  "maxTokens": 4096,
   "retries": 2,
   "maxUserTranscriptTokens": 1200,
   "maxToolTranscriptTokens": 1200,
@@ -11,9 +11,15 @@
   "breakGlassEnabled": true,
   "failureMode": "deny",
   "grantTtlMs": 60000,
-  "autoConfirmBoundedAllows": ["external_directory", "path"],
+  "autoConfirmBoundedAllows": [
+    "external_directory",
+    "path"
+  ],
   "policyAudit": {
     "enabled": true,
     "retentionDays": 180
-  }
+  },
+  "retainedContext": true,
+  "reviewerConversation": true,
+  "investigationTools": false
 }

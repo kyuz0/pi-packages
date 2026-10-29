@@ -129,7 +129,7 @@ export async function complete(
     };
   }
   const deadlineAt = started + config.timeoutMs;
-  if (config.reviewerConversation || config.investigationTools) {
+  if (config.reviewerConversation) {
     return completeConversation({ ctx, config, request, transcript, preflight, sharedContext, started, resolve, observe });
   }
   const controller = new AbortController();
