@@ -132,3 +132,7 @@ deliberately adopted; the loader's export/layout checks fail closed until then.
 The optional model job activates
 only when `PI_SUBAGENTS_GATE_MODEL` and a matching credential secret are
 configured.
+
+## Container policy entry points
+
+Container launchers can load `packages/pi-auto-review/src/container-approval-mode.ts` for manual or disabled approvals, using `SANDBOX_APPROVAL_MODE=manual|off`. `packages/pi-sandbox/src/container-child-policy.ts` applies the selected approval, permissions and inner-sandbox settings to child sessions. The launcher supplies `/opt/sandbox/options.json` and the policy configuration; automatic review uses the normal auto-review entry point.
