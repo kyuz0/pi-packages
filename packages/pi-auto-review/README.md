@@ -64,7 +64,7 @@ Requests pass through these controls in order:
 
 1. deterministic hard denies;
 2. bounded model review;
-3. the local permission terminal when required; and
+3. a blocked-operation reason, or the human terminal in interactive mode; and
 4. an exact, expiring, one-use grant for an external sandbox adapter.
 
 The model cannot override hard denies or grant authority directly. External
@@ -73,7 +73,7 @@ the command, path, resolved path, destination, cwd, agent, or tool input
 invalidates that grant.
 
 Permission-system downgrades authorizer allows on `path` and
-`external_directory` to `defer`. In interactive TUI and RPC frontends,
+`external_directory` to `defer`. With `interactionMode: "interactive"` in TUI and RPC frontends,
 `autoConfirmBoundedAllows` can bind the exact model allow to the immediately
 following recognized permission dialog. The bridge is request-ID-bound,
 expires after ten seconds, and is consumed once. RPC confirms only the matching
@@ -86,7 +86,7 @@ word lists and `case` subjects onto the existing `path` and
 bounded review and one-shot auto-confirm rules; no new surface is implicitly
 trusted.
 
-Automatic review stops for the current turn after three consecutive denials or
+In interactive mode, automatic review stops for the current turn after three consecutive denials or
 ten denials in the last fifty reviews. An explicit denial tells the agent that
 automatic policy denied the request (not a human click), not to rephrase or
 circumvent the same action, and points to `/auto-review-approve` for an exact
@@ -107,8 +107,8 @@ unit independently. Structural rules mask inert shell literals without turning
 named paths into root/home targets, and follow nested shell payloads. Other
 interpreter payloads and heredoc bodies are conservatively scanned as raw text;
 credential rules also keep scanning raw text. When a command fact exceeds the
-reviewer bound (10 KiB), the ask defers to a human instead of being reviewed from
-a truncated program.
+reviewer bound (10 KiB), the operation is blocked rather than reviewed from
+a truncated program. Interactive mode can ask a human instead.
 
 Permission-system 40.x also reports the alternate command spelling a rule
 matched, for example `cat /repo/file` when the command was `cat ./file`.
@@ -119,8 +119,8 @@ upgrading from 39.x.
 
 Nested interpreter expansion is limited to 32 payloads and 32 KiB of cumulative
 payload text per command fact, across all recursion levels. Exceeding either
-budget keeps the raw-command hard-deny checks and otherwise defers to a human
-without calling the model. A reviewer-retry override does not bypass this limit.
+budget keeps the raw-command hard-deny checks and blocks the operation
+without calling the model; interactive mode can ask a human. A reviewer-retry override does not bypass this limit.
 
 ## Configuration
 
@@ -157,7 +157,7 @@ timeouts still come from this extension's configuration.
 The reviewer makes a separate provider request without tools and uses Pi's
 authentication resolution. If no session model is selected, authentication
 fails, or the provider cannot serve this auxiliary request, the existing
-`failureMode` applies (`"deny"` by default, or `"defer"` to the human terminal).
+`failureMode` applies in interactive mode (`"deny"` by default, or `"defer"` to the human terminal). Automatic mode always returns a blocked operation.
 The default remains `"codex-auto-review"`; explicit model IDs and
 `"provider/reviewer-model"` values continue to select a dedicated reviewer.
 The bare value `"current"` is reserved for this mode; use `"provider/current"`
@@ -190,7 +190,7 @@ Package defaults:
   "reviewerConversation": true,
   "investigationTools": false,
   "timeoutMs": 600000,
-  "maxTokens": 4096,
+  "maxTokens": 32768,
   "retries": 2,
   "maxUserTranscriptTokens": 1200,
   "maxToolTranscriptTokens": 1200,
@@ -207,9 +207,10 @@ Package defaults:
 }
 ```
 
-`failureMode: "deny"` is the default. `"defer"` falls through to the human
-terminal. Set `autoConfirmBoundedAllows` to `[]` to keep every bounded allow
-manual.
+`interactionMode: "automatic"` is the default: failures return to the agent.
+In `interactive` mode, `failureMode: "deny"` blocks failures while `"defer"`
+passes them to the human terminal. Set `autoConfirmBoundedAllows` to `[]`
+to keep every bounded allow manual in that mode.
 
 Project configuration may only lower timeouts, token/evidence limits, retries,
 and grant TTL, set `failureMode` to `"deny"`, set `breakGlassEnabled` to
@@ -411,7 +412,7 @@ Defaults are `retainedContext: true`, `reviewerConversation: true` and
 `investigationTools: false`. Inspection tools cannot be enabled. Trusted user
 configuration may select independent reviews with `reviewerConversation: false`;
 project configuration cannot disable context handling or change the reviewer.
-The 4,096-token output ceiling and ten-minute deadline accommodate local
+The 32,768-token output ceiling and ten-minute deadline accommodate local
 reasoning models; these are limits, not expected response times.
 
 The reusable sequence check submits inert action strings and never executes
@@ -570,3 +571,22 @@ The listener submits filesystem-write, network, delete, Git-push, and forwarded
 subagent boundaries. No represented operation is executed; the main-agent
 request is aborted after the samples finish. `--no-builtin-tools` ensures Bash
 comes from `pi-sandbox` rather than Pi's built-in implementation.
+
+## Automatic approval without dialogs
+
+The default `interactionMode: "automatic"` returns review failures and rejections
+to the agent as blocked operations with a reason. It never hands an undecided
+request to the human approval dialog. The agent can retry a failed review or
+choose an alternative that respects the restriction. Failures grant no access,
+and repeated failures do not prevent a fresh review in the same turn.
+
+Set trusted `interactionMode: "interactive"` to enable human fallback. Direct
+file operations excluded by the permission system remain excluded: automatic
+mode returns instructions to use sandboxed Bash or an explicitly reviewed
+`bash_escalate` command instead of opening a confirmation dialog.
+
+The reviewer defaults to low thinking and 32,768 output tokens. Pi compaction
+retains the original branch messages; adding its summary does not invalidate a
+review. New original instructions, edited messages, or changed branch evidence
+still invalidate the decision. Summaries cannot grant permission. Review attempts
+record stop reasons, token usage and configured budgets in session custom entries.

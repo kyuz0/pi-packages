@@ -110,6 +110,7 @@ test("host-IPC fallback warns that the first attempt may have side effects", asy
     { reason: "unix-socket-eperm", rule: "unix-socket-eperm" },
     {
       ...context,
+      humanFallback: true,
       humanApproval: async (request) => {
         preview = request.toolInputPreview ?? "";
         return "deny";
@@ -251,10 +252,12 @@ test("uses a human only for defer or an unavailable broker", async () => {
     ...context,
     broker: fake.broker,
     humanApproval,
+    humanFallback: true,
   });
   const unavailable = await approveSandboxTrap(trap, {
     ...context,
     humanApproval,
+    humanFallback: true,
   });
   assert.equal(deferred.action, "allow");
   assert.equal(unavailable.action, "allow");
@@ -320,4 +323,16 @@ test("a broker protocol failure cannot be overridden by a human", async () => {
   assert.equal(result.action, "deny");
   assert.equal(result.source, "unavailable");
   assert.equal(prompted, false);
+});
+
+test("automatic network review returns failure details without calling the human and can be retried", async () => {
+  let ready = false, prompts = 0;
+  const broker = new BoundaryApprovalBroker({ humanFallback: false, reviewer: async () => ({
+    ...review, outcome: ready ? "allow" : "defer", rationale: ready ? "Allowed" : "Reviewer stopped with length (output_limit)",
+  }) });
+  const ctx = { ...context, broker, humanApproval: async () => { prompts++; return "allow-once" as const; } };
+  const endpoint = { hostname: "registry.npmjs.org", port: 443, protocol: "https" as const };
+  const denied = await approveDomainEndpoint(endpoint, ctx);
+  assert.equal(denied.action, "deny"); assert.match(denied.reason!, /output_limit/); assert.equal(prompts, 0);
+  ready = true; assert.equal((await approveDomainEndpoint(endpoint, ctx)).action, "allow"); assert.equal(prompts, 0);
 });

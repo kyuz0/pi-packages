@@ -102,6 +102,7 @@ function reviewerTranscript(modelContext: unknown): {
 function config(overrides: Partial<Config> = {}): Config {
   return {
     ...loadConfig(),
+    interactionMode: "interactive", // Explicitly test the optional human-fallback contract.
     // Legacy selector/retry contracts are tested explicitly in independent mode.
     retainedContext: false,
     reviewerConversation: false,
@@ -958,7 +959,7 @@ test("real permission-system authorizer chain integration", async (t) => {
           .filter((entry) => entry.event === "pi_auto_review_decision")
           .every((entry) => entry.data.toolCallId === "call-shared"),
       );
-      assert.equal(instance.appendedEntries.length, 0);
+      assert.equal(instance.appendedEntries.filter(e => e.type !== "pi-auto-review-attempt").length, 0);
       assert.equal(instance.statusCalls.length, 0);
       assert.equal(instance.widgets.length, 4);
       assert.ok(instance.widgets.every((widget) =>
@@ -995,7 +996,7 @@ test("real permission-system authorizer chain integration", async (t) => {
         requestId: "request-no-call",
         command: "printf direct",
       });
-      assert.equal(instance.appendedEntries.length, 0);
+      assert.equal(instance.appendedEntries.filter(e => e.type !== "pi-auto-review-attempt").length, 0);
       assert.equal(instance.statusCalls.length, 0);
       assert.equal(instance.widgets.length, 4);
     } finally {
@@ -3395,4 +3396,18 @@ test("real permission-system authorizer chain integration", async (t) => {
       instance.dispose();
     }
   });
+});
+
+test("automatic mode returns reviewer uncertainty to the agent without staging human confirmation",async()=>{
+ const instance=harness(JSON.stringify({...JSON.parse(allow),outcome:"defer",risk_level:"medium",rationale:"Insufficient evidence"}),{config:config({interactionMode:"automatic"})});
+ try {const result=await instance.authorize("bash");assert.equal(result.decision.approved,false);assert.match(JSON.stringify(result),/Insufficient evidence/);} finally {instance.dispose();}
+});
+
+for (const behavior of [new Error("offline"), {stopReason:"length",content:[]}]) test("automatic review failure never calls the human terminal",async()=>{
+ const instance=harness(behavior,{config:config({interactionMode:"automatic"})});
+ try {const result=await instance.authorize("bash");assert.equal(result.decision.approved,false);assert.equal(result.terminalCalls,0);} finally {instance.dispose();}
+});
+test("automatic mode refuses capped file access without opening a confirmation",async()=>{
+ const instance=harness(allow,{config:config({interactionMode:"automatic"})});
+ try {const result=await instance.authorize("external_directory");assert.equal(result.decision.approved,false);assert.equal(result.terminalCalls,0);assert.match(JSON.stringify(result),/bash_escalate/);} finally {instance.dispose();}
 });

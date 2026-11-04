@@ -17,6 +17,7 @@ export type ReasoningLevel =
 export type BoundedSurface = "external_directory" | "path";
 
 export type Config = {
+  interactionMode?: "automatic" | "interactive";
   retainedContext?: boolean;
   reviewerConversation?: boolean;
   investigationTools?: boolean;

@@ -2,7 +2,7 @@
   "model": "codex-auto-review",
   "reasoning": "low",
   "timeoutMs": 600000,
-  "maxTokens": 4096,
+  "maxTokens": 32768,
   "retries": 2,
   "maxUserTranscriptTokens": 1200,
   "maxToolTranscriptTokens": 1200,
@@ -21,5 +21,6 @@
   },
   "retainedContext": true,
   "reviewerConversation": true,
-  "investigationTools": false
+  "investigationTools": false,
+  "interactionMode": "automatic"
 }

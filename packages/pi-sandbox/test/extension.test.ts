@@ -343,6 +343,8 @@ const tmuxTest =
     : test.skip;
 
 tmuxTest("preflight host backend reaches an isolated tmux socket", async () => {
+  const previousMode = process.env.SANDBOX_APPROVAL_MODE;
+  process.env.SANDBOX_APPROVAL_MODE = "manual";
   let bashTool: ToolDefinition | undefined;
   let approvals = 0;
   const approvalPrompts: string[] = [];
@@ -410,6 +412,7 @@ tmuxTest("preflight host backend reaches an isolated tmux socket", async () => {
     assert.match(approvalPrompts[1] ?? "", /tmux .* list-sessions/);
     assert.match(approvalPrompts[2] ?? "", /tmux .* capture-pane/);
   } finally {
+    if (previousMode === undefined) delete process.env.SANDBOX_APPROVAL_MODE; else process.env.SANDBOX_APPROVAL_MODE = previousMode;
     spawnSync("tmux", ["-L", socket, "kill-server"]);
     rmSync(cwd, { recursive: true, force: true });
   }

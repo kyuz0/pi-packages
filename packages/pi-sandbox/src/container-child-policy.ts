@@ -5,7 +5,7 @@ import { registerRequiredChildExtensions } from 'pi-subagents/required-child-ext
 export default function childPolicy(pi: ExtensionAPI) {
   const file = '/opt/sandbox/options.json';
   const selected = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
-  const automatic = (selected.approval ?? 'automatic') === 'automatic';
+  const automatic = ['automatic', 'assisted'].includes(selected.approval ?? 'automatic');
   const inner = selected.inner_sandbox !== false;
   const paths = [
     automatic ? '/opt/pi-security/packages/pi-auto-review/src/index.ts' : '/opt/pi-security/packages/pi-auto-review/src/container-approval-mode.ts',

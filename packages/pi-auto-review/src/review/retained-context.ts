@@ -67,9 +67,20 @@ export function retainContext(entries: readonly unknown[], userBytes = 8192, ass
     source: "active-session-branch", provenance: "session-role-not-independent-human-attestation" };
 }
 export function retainedSnapshot(sessionId: string, entries: readonly unknown[]): string {
-  // Include branch ancestry and complete raw entries, not only selected text.
-  // A new restriction, a branch switch, or a context edit invalidates an allow.
-  return createHash("sha256").update(sessionId).update(JSON.stringify(entries)).digest("hex");
+  // Compaction appends a summary but preserves original branch messages. Hash
+  // original instruction evidence, never summaries or observational entries.
+  // Full user contents and IDs detect edits, new restrictions and branch changes.
+  const evidence = entries.flatMap(value => {
+    const entry = object(value), message = object(entry?.message);
+    if (entry?.type !== "message" || !message) return [];
+    const metadata = object(message.metadata);
+    if (metadata?.["compaction.summary"] || metadata?.["branch.summary"]) return [];
+    if (message.role === "user") return [{ id: entry.id, message }];
+    if (message.role === "assistant" && visibleText(message.content).text)
+      return [{ id: entry.id, message: { role: message.role, content: visibleText(message.content).text } }];
+    return [];
+  });
+  return createHash("sha256").update(sessionId).update(JSON.stringify(evidence)).digest("hex");
 }
 export function withRetainedContext(transcript: TranscriptResult, entries: readonly unknown[]): TranscriptResult {
   const retainedContext = retainContext(entries);

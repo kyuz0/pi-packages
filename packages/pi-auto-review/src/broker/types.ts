@@ -92,7 +92,7 @@ export type BoundaryDecision =
       kind: "deny";
       review: BoundaryReview;
       circuitBreakerTripped: boolean;
-      denialSource?: "hard-deny" | "reviewer" | "circuit-breaker";
+      denialSource?: "hard-deny" | "reviewer" | "circuit-breaker" | "unavailable";
       recoveryCommand?:
         | "/auto-review-approve"
         | "/auto-review-break-glass"

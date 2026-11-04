@@ -27,6 +27,7 @@ export type TrapApprovalContext = {
   agentName?: string;
   signal?: AbortSignal;
   humanApproval?: HumanApproval;
+  humanFallback?: boolean;
 };
 
 export type TrapApprovalResult = {
@@ -109,6 +110,7 @@ async function approveBoundaryRequest(
   request: BoundaryRequest,
   context: TrapApprovalContext,
 ): Promise<TrapApprovalResult> {
+  if (!context.broker && !(context.humanFallback ?? ["manual", "assisted"].includes(process.env.SANDBOX_APPROVAL_MODE ?? ""))) return { action: "deny", source: "unavailable", reason: "Automatic reviewer is unavailable. No permission granted; retry after the reviewer is available." };
   if (!context.broker) {
     return askHuman(request, context, "pi-auto-review broker is unavailable");
   }
@@ -135,7 +137,7 @@ async function approveBoundaryRequest(
       decision.recoveryCommand ?? "/auto-review-approve";
     const recovery =
       recoveryCommand === false
-        ? " This local safety denial cannot be overridden."
+        ? (decision.denialSource === "hard-deny" ? " This local safety denial cannot be overridden." : "")
         : ` Use ${recoveryCommand} for one exact retry.`;
     return {
       action: "deny",

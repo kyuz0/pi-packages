@@ -14,13 +14,14 @@ import type {
 import type { PolicyAuditConfig } from "../policy-audit/index.ts";
 
 export const DEFAULT_CONFIG: Config = {
+  interactionMode: "automatic",
   retainedContext: true,
   reviewerConversation: true,
   investigationTools: false,
   model: "codex-auto-review",
   reasoning: "low",
   timeoutMs: 600_000,
-  maxTokens: 4096,
+  maxTokens: 32768,
   retries: 2,
   maxUserTranscriptTokens: 1_200,
   maxToolTranscriptTokens: 1_200,
@@ -40,6 +41,7 @@ export function validateConfig(value: unknown, source: string): Config {
   }
   const raw = value as Partial<Config> & Record<string, unknown>;
   const allowedKeys = new Set([
+    "interactionMode",
     "retainedContext",
     "reviewerConversation",
     "investigationTools",
@@ -65,6 +67,7 @@ export function validateConfig(value: unknown, source: string): Config {
     );
   }
   const config = { ...DEFAULT_CONFIG, ...raw };
+  if (!["automatic", "interactive"].includes(config.interactionMode!)) throw new Error("interactionMode must be automatic or interactive");
   if (typeof config.retainedContext !== "boolean") throw new Error("retainedContext must be boolean");
   for (const key of ["reviewerConversation", "investigationTools"] as const) {
     if (typeof config[key] !== "boolean") throw new Error(`${key} must be boolean`);
@@ -102,9 +105,9 @@ export function validateConfig(value: unknown, source: string): Config {
   if (
     !Number.isInteger(config.maxTokens) ||
     config.maxTokens < 256 ||
-    config.maxTokens > 4_096
+    config.maxTokens > 32_768
   ) {
-    throw new Error(`${EXTENSION_NAME}: maxTokens must be 256..4096`);
+    throw new Error(`${EXTENSION_NAME}: maxTokens must be 256..32768`);
   }
   if (
     !Number.isInteger(config.retries) ||

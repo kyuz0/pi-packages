@@ -730,3 +730,23 @@ test("a break-glass allow lets the turn continue after the breaker tripped", asy
     "reviewer",
   );
 });
+
+for (const failure of ["defer", "throw", "deny"]) test(`automatic mode returns ${failure} without a human gate and permits a fresh review`,async()=>{
+ let ready=false,calls=0;
+ const broker=new BoundaryApprovalBroker({humanFallback:false,reviewer:async()=>{
+  calls++;if(ready)return allowReview;
+  if(failure==="throw")throw Error("offline");
+  return {...allowReview,outcome:failure as "defer"|"deny",rationale:"Specific review failure"};
+ }});
+ const context={sessionId:"auto",scopeKey:"auto",issueGrant:true};
+ for(let i=0;i<6;i++){
+  const d=await broker.review(request,context);assert.equal(d.kind,"deny");
+  if(d.kind==="deny"){assert.equal(d.circuitBreakerTripped,false);assert.equal(d.recoveryCommand,false);}
+ }
+ ready=true;const d=await broker.review(request,context);assert.equal(d.kind,"allow");assert.equal(calls,7);
+ assert.ok(d.kind==="allow"&&d.grant&&broker.consumeGrant(request,"auto",d.grant.token));
+});
+test("automatic mode never grants a deterministic hard denial",async()=>{
+ let calls=0;const b=new BoundaryApprovalBroker({humanFallback:false,hardDeny:()=>({rule:"protected",reason:"Protected file"}),reviewer:async()=>{calls++;return allowReview;}});
+ const d=await b.review(request,{sessionId:"s",scopeKey:"s",issueGrant:true});assert.equal(d.kind,"deny");assert.equal(calls,0);
+});

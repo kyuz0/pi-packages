@@ -103,7 +103,7 @@ function externalSubagentDiagnostic(pi: ExtensionAPI): {
 
 function humanApproval(ctx: ExtensionContext): HumanApproval {
   return async (request, reason, signal) => {
-    if (!ctx.hasUI) return "deny";
+    if (!ctx.hasUI || ["automatic", "off"].includes(process.env.SANDBOX_APPROVAL_MODE ?? "")) return "deny";
     const target =
       request.surface === "host-ipc"
         ? request.command ?? request.operation
@@ -189,6 +189,7 @@ function sandboxOperations(
             review: async (trap) => {
               const result = await approveSandboxTrap(trap, approvalContext);
               if (result.action === "deny" && result.reason) {
+                options.onData(Buffer.from(`Sandbox request blocked: ${result.reason}\n`));
                 if (ctx.hasUI) {
                   ctx.ui.notify(`Sandbox denied: ${result.reason}`, "warning");
                 }
@@ -200,6 +201,9 @@ function sandboxOperations(
                 endpoint,
                 approvalContext,
               );
+              if (result.action === "deny" && result.reason) {
+                options.onData(Buffer.from(`Network request blocked: ${result.reason}\n`));
+              }
               if (result.action === "deny" && result.reason && ctx.hasUI) {
                 ctx.ui.notify(
                   `Domain proxy denied: ${result.reason}`,

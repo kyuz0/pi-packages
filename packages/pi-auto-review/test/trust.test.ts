@@ -92,7 +92,7 @@ test("project config can only tighten trusted settings and is frozen", () => {
 test("user config can fully overlay package trusted settings", () => {
   const packageConfig = loadConfig();
   assert.equal(packageConfig.model, "codex-auto-review");
-  assert.equal(packageConfig.maxTokens, 4096);
+  assert.equal(packageConfig.maxTokens, 32768);
   assert.equal(packageConfig.maxReviewerInputTokens, 8_192);
   assert.equal(packageConfig.breakGlassEnabled, true);
   const effective = applyUserConfig(packageConfig, {

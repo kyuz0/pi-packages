@@ -75,7 +75,7 @@ export async function completeConversation(o: Options): Promise<ReviewResult> {
       const observation = { attempt: summary.attempts.length + 1, model: `${runtime.model.provider}/${runtime.model.id}`, status: stopped ? "success" as const : "non_stop" as const, errorClass, stopReason: normalizedStopReason(response.stopReason), durationMs: Date.now() - roundStarted, willRetry: false, usageAvailability: observedUsage(response).availability, usage: observedUsage(response).usage };
       summary.attempts.push(observation); summary.conversation.rounds++;
       o.observe?.({ type: "review_attempt", requestId: request.id, surface: request.surface, ...observation });
-      if (!stopped) { if (errorClass !== "none") summary.errorCounts[errorClass] = (summary.errorCounts[errorClass] ?? 0) + 1; return finish("defer", "Reviewer did not complete its response."); }
+      if (!stopped) { if (errorClass !== "none") summary.errorCounts[errorClass] = (summary.errorCounts[errorClass] ?? 0) + 1; return finish("defer", `Reviewer stopped with ${response.stopReason} (${errorClass}); output budget ${config.maxTokens} tokens. No permission granted. Retry the request after addressing the failure.`); }
       const calls = response.content.filter(p => p.type === "toolCall");
       // Preserve protocol fields; never carry hidden reasoning as new authority.
       messages.push({ ...response, content: response.content.filter(p => p.type !== "thinking") });

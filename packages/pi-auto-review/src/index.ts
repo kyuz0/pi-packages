@@ -281,6 +281,13 @@ export function createPiAutoReviewExtension(
   const emitTelemetry = (event: ReviewerTelemetryEvent): void => {
     writeOptionalAuditFile(event);
     try {
+      if (event.type === "review_attempt") pi.appendEntry("pi-auto-review-attempt", {
+        requestId: event.requestId, surface: event.surface, model: event.model,
+        stopReason: event.stopReason, errorClass: event.errorClass, durationMs: event.durationMs,
+        usage: event.usage, maxTokens: config.maxTokens, reasoning: config.reasoning,
+      });
+    } catch { /* Observational persistence must never affect approval. */ }
+    try {
       pi.events.emit("pi-auto-review:audit", structuredClone(event));
     } catch {
       // Telemetry is observational and must never affect authorization.
@@ -362,6 +369,7 @@ export function createPiAutoReviewExtension(
           toolName: request.toolName,
           toolInputPreview: request.toolInputPreview,
         }),
+      humanFallback: config.interactionMode === "interactive",
       failureMode: config.failureMode,
       breakGlassEnabled: config.breakGlassEnabled,
       grants: new OneShotGrantStore(config.grantTtlMs),
@@ -770,7 +778,7 @@ export function createPiAutoReviewExtension(
           const allowCapped =
             decision.kind === "allow" && boundedRequest(surface);
           const autoConfirmQueued =
-            allowCapped &&
+            config.interactionMode === "interactive" && allowCapped &&
             (reviewContext.mode === "tui" || reviewContext.mode === "rpc") &&
             reviewContext.hasUI &&
             uiAutoConfirmer.stage(request.id, surface);
@@ -851,6 +859,14 @@ export function createPiAutoReviewExtension(
                 : undefined,
           });
 
+          if (config.interactionMode !== "interactive" && allowCapped) return {
+            kind: "deny", reason: "This file tool requires human confirmation under the permission policy. Automatic mode never prompts. Use sandboxed bash for allowed files, or bash_escalate with the exact command and justification for automatic review.",
+          };
+          if (config.interactionMode !== "interactive" && decision.kind !== "allow") return {
+            kind: "deny", reason: decision.review.rationale + (decision.kind === "deny" && decision.denialSource === "hard-deny"
+              ? " " + LOCAL_HARD_DENY_AGENT_INSTRUCTION
+              : " The operation was not executed. Retry a failed review, or choose an alternative consistent with the stated restriction; do not bypass it."),
+          };
           if (allowCapped || decision.kind === "defer") {
             return { kind: "defer" };
           }

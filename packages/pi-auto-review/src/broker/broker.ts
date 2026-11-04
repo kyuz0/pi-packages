@@ -14,6 +14,7 @@ import type {
 
 export type BoundaryApprovalBrokerOptions = {
   reviewer: BoundaryReviewer;
+  humanFallback?: boolean;
   hardDeny?: BoundaryHardDeny;
   failureMode?: "deny" | "defer";
   grants?: OneShotGrantStore;
@@ -46,6 +47,7 @@ function assertRequest(request: BoundaryRequest): void {
 
 export class BoundaryApprovalBroker {
   readonly #reviewer: BoundaryReviewer;
+  readonly #humanFallback: boolean;
   readonly #hardDeny?: BoundaryHardDeny;
   readonly #failureMode: "deny" | "defer";
   readonly #grants: OneShotGrantStore;
@@ -56,6 +58,7 @@ export class BoundaryApprovalBroker {
 
   constructor(options: BoundaryApprovalBrokerOptions) {
     this.#reviewer = options.reviewer;
+    this.#humanFallback = options.humanFallback ?? true;
     this.#hardDeny = options.hardDeny;
     this.#failureMode = options.failureMode ?? "deny";
     this.#grants = options.grants ?? new OneShotGrantStore();
@@ -63,6 +66,10 @@ export class BoundaryApprovalBroker {
     this.#denials = options.denials ?? new RecentDenialStore();
     this.#breakGlassEnabled = options.breakGlassEnabled ?? true;
     this.#audit = options.audit;
+  }
+
+  private unavailable(reason: string): BoundaryDecision {
+    return { kind: "deny", review: { ...FAILURE_REVIEW, rationale: `${reason} No permission granted. You may retry this review or choose an allowed alternative.` }, circuitBreakerTripped: false, denialSource: "unavailable", recoveryCommand: false };
   }
 
   async review(
@@ -137,7 +144,7 @@ export class BoundaryApprovalBroker {
         approvedAt: userOverride.approvedAt,
         scopeKey: context.scopeKey,
       });
-    } else if (this.#breaker.isTripped(context.scopeKey)) {
+    } else if (this.#humanFallback && this.#breaker.isTripped(context.scopeKey)) {
       const review: BoundaryReview = {
         ...FAILURE_REVIEW,
         rationale:
@@ -161,6 +168,7 @@ export class BoundaryApprovalBroker {
       this.audit("review_failure", request, {
         errorClass: "reviewer_unavailable",
       });
+      if (!this.#humanFallback) return this.unavailable(reason);
       if (this.#failureMode === "defer") {
         this.#breaker.record(context.scopeKey, false);
         return {
@@ -185,6 +193,10 @@ export class BoundaryApprovalBroker {
     }
 
     this.audit("review_decision", request, review);
+    if (!this.#humanFallback && review.outcome === "defer") return this.unavailable(review.rationale);
+    if (!this.#humanFallback && review.outcome === "deny") return {
+      kind: "deny", review, circuitBreakerTripped: false, denialSource: "reviewer", recoveryCommand: false,
+    };
     if (review.outcome === "deny") {
       this.#denials.record(request, context, review);
       const breaker = this.#breaker.record(context.scopeKey, true);
