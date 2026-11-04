@@ -131,7 +131,7 @@ export function formatReviewModelName(model: unknown): string | undefined {
   const raw = String(model ?? "")
     .replace(/\s+/g, " ")
     .trim();
-  if (!raw) return undefined;
+  if (!raw || raw === "current") return undefined;
   const slash = raw.indexOf("/");
   const name =
     slash > 0 && slash < raw.length - 1 ? raw.slice(slash + 1) : raw;
@@ -580,7 +580,9 @@ export function buildUserReviewingWidgetData(input: {
   model?: string;
 }): UserReviewWidgetData {
   const target = truncateReviewText(input.target, 100);
-  const model = formatReviewModelName(input.model) ?? "reviewer";
+  const model = input.model === "current"
+    ? "the model selected in Pi"
+    : formatReviewModelName(input.model) ?? "the reviewer model";
   return {
     phase: "reviewing",
     outcome: "defer",
@@ -698,6 +700,23 @@ function isTransientCompletedOutcome(outcome: UserReviewOutcome): boolean {
   return outcome === "allow" || outcome === "auto_confirm";
 }
 
+function permissionDecisionReason(record: Record<string, unknown>): string {
+  const reasons: Record<string, string> = {
+    policy_deny: "A configured permission rule blocked this operation.",
+    user_denied: "The approval dialog returned a denial.",
+    confirmation_unavailable: "The required approval dialog was unavailable, so the operation was blocked.",
+    prompt_unanswered: "The approval dialog timed out without an answer, so the operation was blocked.",
+    authorizer_denied: "The automatic authorizer blocked this operation.",
+    gate_error: "The permission check or escalation failed, so the operation was blocked.",
+  };
+  if (typeof record.reason === "string" && record.reason.trim()) return record.reason;
+  const reason = reasons[String(record.resolution)] ??
+    (record.result === "deny" ? "The permission system denied this operation without supplying a reason."
+      : "The permission system allowed this operation.");
+  return record.resolution === "policy_deny" && typeof record.matchedPattern === "string"
+    ? `${reason} Matched rule: ${record.matchedPattern}` : reason;
+}
+
 /** Owns the single live widget and rejects stale concurrent completions. */
 export class UserReviewWidgetController {
   #generation = 0;
@@ -710,6 +729,8 @@ export class UserReviewWidgetController {
     ctx: ExtensionContext;
     data?: UserReviewWidgetData;
     notice?: UserReviewNotice;
+    input: { surface: string; target?: string; model?: string };
+    permissionFinal?: boolean;
   };
   constructor(
     private readonly successTtlMs = USER_REVIEW_SUCCESS_WIDGET_TTL_MS,
@@ -722,7 +743,7 @@ export class UserReviewWidgetController {
   ): number {
     const generation = ++this.#generation;
     this.#cancelDismiss();
-    this.#current = { requestId, generation, ctx, data: buildUserReviewingWidgetData(input) };
+    this.#current = { requestId, generation, ctx, input, data: buildUserReviewingWidgetData(input) };
     this.#render();
     return generation;
   }
@@ -765,9 +786,9 @@ export class UserReviewWidgetController {
       notifyUserReview(ctx, notice);
       return;
     }
-    if (!this.#isCurrent(requestId, generation)) return;
+    if (!this.#isCurrent(requestId, generation) || this.#current?.permissionFinal) return;
     this.#cancelDismiss();
-    this.#current = { requestId, generation, ctx, notice, data };
+    this.#current = { ...this.#current!, requestId, generation, ctx, notice, data };
     if (!setWidget(ctx, data)) notifyUserReview(ctx, notice);
     if (isTransientCompletedOutcome(data.outcome)) {
       this.#scheduleDismiss(generation, ctx);
@@ -784,26 +805,26 @@ export class UserReviewWidgetController {
       !current.data
     ) return;
 
-    if (record.result === "allow") {
-      this.#scheduleDismiss(current.generation, current.ctx);
-      return;
-    }
-
-    if (
-      record.result !== "deny" ||
-      current.data.lines.includes("Local confirmation · denied")
-    ) return;
-    const data = {
-      ...current.data,
-      lines: [...current.data.lines, "Local confirmation · denied"],
+    if (record.result !== "allow" && record.result !== "deny") return;
+    if (current.permissionFinal) return;
+    const denied = record.result === "deny";
+    const input = {
+      ...current.input,
+      outcome: denied ? "deny" as const : "allow" as const,
+      rationale: permissionDecisionReason(record),
     };
-    const notice = {
-      type: current.notice?.type ?? data.type,
-      message: data.lines.join("\n"),
-    };
+    // Authorizer events have no rationale field. Keep the review's existing
+    // explanation and usage when it already describes this final outcome.
+    const retainReview = current.data.phase === "complete" &&
+      ((record.resolution === "authorizer_denied" &&
+        ["deny", "unavailable", "circuit_breaker"].includes(current.data.outcome)) ||
+       (record.result === "allow" && current.data.outcome === "allow"));
+    const data = retainReview ? current.data : buildUserReviewWidgetData(input);
+    const notice = retainReview && current.notice ? current.notice : buildUserReviewNotice(input);
     this.#cancelDismiss();
-    this.#current = { ...current, data, notice };
+    this.#current = { ...current, permissionFinal: true, data, notice };
     if (!setWidget(current.ctx, data)) notifyUserReview(current.ctx, notice);
+    if (!denied) this.#scheduleDismiss(current.generation, current.ctx);
   }
 
   clear(ctx?: ExtensionContext): void {

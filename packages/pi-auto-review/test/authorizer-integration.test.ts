@@ -2611,7 +2611,7 @@ test("real permission-system authorizer chain integration", async (t) => {
         });
         assert.match(
           renderedWidgetLines(instance.widgets.at(-1)).join("\n"),
-          /Local confirmation.*denied/,
+          /Auto-review.*denied/,
         );
       } finally {
         instance.dispose();

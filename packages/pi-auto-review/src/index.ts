@@ -766,7 +766,7 @@ export function createPiAutoReviewExtension(
           const widgetGeneration = reviewWidget.begin(request.id, reviewContext, {
             surface,
             target,
-            model: config.model,
+            model: config.model === "current" ? reviewContext.model?.id : config.model,
           });
           const decision = await broker.review(request, {
             sessionId: reviewContext.sessionManager.getSessionId(),
@@ -789,7 +789,7 @@ export function createPiAutoReviewExtension(
           } else if (allowCapped && autoConfirmQueued) {
             userOutcome = "auto_confirm";
           } else if (allowCapped) {
-            userOutcome = "needs_confirmation";
+            userOutcome = config.interactionMode === "interactive" ? "needs_confirmation" : "deny";
           } else if (decision.kind === "allow") {
             userOutcome = "allow";
           } else if (decision.kind === "defer") {
@@ -802,7 +802,9 @@ export function createPiAutoReviewExtension(
             outcome: result?.unavailable ? "unavailable" as const : userOutcome,
             surface,
             target,
-            rationale: decision.review.rationale,
+            rationale: allowCapped && config.interactionMode !== "interactive"
+              ? "This file tool requires human confirmation. Automatic mode blocked it; Pi can use sandboxed bash or request review of an exact bash_escalate command."
+              : decision.review.rationale,
             recoveryCommand:
               decision.kind === "deny"
                 ? decision.recoveryCommand

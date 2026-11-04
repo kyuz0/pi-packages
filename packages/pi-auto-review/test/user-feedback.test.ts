@@ -99,6 +99,7 @@ test("formatReviewModelName drops a leading provider segment", () => {
   assert.equal(formatReviewModelName("openai/gpt-4.1"), "gpt-4.1");
   assert.equal(formatReviewModelName("codex-auto-review"), "codex-auto-review");
   assert.equal(formatReviewModelName("provider/org/model"), "org/model");
+  assert.equal(formatReviewModelName("current"), undefined);
 });
 
 test("formatReviewMeta joins model, usage, duration, and extra calls", () => {
@@ -424,7 +425,7 @@ test("controller overwrites checks, retains completion, and rejects stale update
   harness.controller.permissionDecision({ requestId: "request-a", result: "deny" });
   assert.equal(harness.widgets.length, callsAfterCompletion);
   harness.controller.permissionDecision({ requestId: "request-b", result: "deny" });
-  assert.match(renderLastWidget(harness).join("\n"), /Local confirmation · denied/);
+  assert.match(renderLastWidget(harness).join("\n"), /denied/);
   assert.equal(harness.widgets.at(-1)?.content === undefined, false);
   harness.controller.clear(harness.ctx as never);
   assert.equal(harness.widgets.at(-1)?.content, undefined);
@@ -675,4 +676,65 @@ test("non-TUI completions keep independent notification behavior", () => {
   }
   assert.equal(harness.widgets.length, 0);
   assert.equal(harness.notifications.length, 2);
+});
+
+
+test("current model setting is explained instead of shown as a model name", () => {
+  const harness = widgetHarness();
+  harness.controller.begin("r", harness.ctx as never, { surface: "path", model: "current" });
+  assert.match(renderLastWidget(harness).join("\n"), /Waiting for the model selected in Pi/);
+  assert.doesNotMatch(renderLastWidget(harness).join("\n"), /Waiting for current/);
+  harness.controller.clear();
+});
+
+for (const result of ["deny", "allow"] as const) {
+  test(`final permission ${result} replaces pending review and survives late completion`, () => {
+    const harness = widgetHarness();
+    const generation = harness.controller.begin("r", harness.ctx as never, {
+      surface: "external_directory", target: "/tmp/x", model: "current",
+    });
+    harness.controller.permissionDecision({ requestId: "other", result });
+    assert.match(renderLastWidget(harness).join("\n"), /Waiting for/);
+    harness.controller.permissionDecision({ requestId: "r", result });
+    const final = renderLastWidget(harness).join("\n");
+    assert.match(final, result === "deny" ? /denied/ : /allowed/);
+    assert.doesNotMatch(final, /Waiting for|reviewing|confirm locally/);
+    harness.controller.promptStart({ title: "Unrelated prompt" });
+    harness.controller.promptEnd();
+    const input = { surface: "external_directory", outcome: "needs_confirmation" as const };
+    harness.controller.complete("r", generation, harness.ctx as never,
+      buildUserReviewNotice(input), buildUserReviewWidgetData(input));
+    assert.equal(renderLastWidget(harness).join("\n"), final);
+    harness.controller.clear();
+  });
+}
+
+
+for (const [resolution, expected] of [
+  ["confirmation_unavailable", /approval dialog was unavailable/],
+  ["prompt_unanswered", /timed out without an answer/],
+  ["gate_error", /permission check or escalation failed/],
+  ["user_denied", /approval dialog returned a denial/],
+  ["policy_deny", /Matched rule: blocked.example/],
+  [undefined, /without supplying a reason/],
+] as const) {
+  test(`denial explains permission resolution ${resolution}`, () => {
+    const h = widgetHarness();
+    h.controller.begin("r", h.ctx as never, {surface: "bash"});
+    h.controller.permissionDecision({requestId: "r", result: "deny", resolution, matchedPattern: "blocked.example"});
+    assert.match(renderLastWidget(h, 300).join("\n"), expected);
+    h.controller.clear();
+  });
+}
+
+test("final authorizer denial retains its actual explanation and token usage", () => {
+  const h = widgetHarness();
+  const g = h.controller.begin("r", h.ctx as never, {surface: "bash"});
+  const input = {outcome: "deny" as const, surface: "bash", rationale: "The command would delete files outside the approved directory.", usage: {availability: "reported" as const, output: 120}};
+  h.controller.complete("r", g, h.ctx as never, buildUserReviewNotice(input), buildUserReviewWidgetData(input));
+  h.controller.permissionDecision({requestId: "r", result: "deny", resolution: "authorizer_denied"});
+  const text = renderLastWidget(h).join("\n");
+  assert.match(text, /delete files outside the approved directory/);
+  assert.match(text, /120 toks out/);
+  h.controller.clear();
 });
