@@ -1,11 +1,51 @@
 /** Private container endpoint for the host's authenticated browser viewer. */
-import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, rename, readlink, readdir } from 'node:fs/promises';
 import { createConnection } from 'node:net';
+import { once } from 'node:events';
 import { createHmac } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
 export const browserRoot = '/home/node/.cache/pi-browser';
 export const validId = id => /^[a-f0-9]{32}$/.test(id);
+export function chromiumCommand(id) {
+  const command = ['/opt/betterwright/.betterwright/chromium/linux-x64/betterchromium',
+    '--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--no-first-run',
+    '--no-default-browser-check', '--disable-background-networking', '--disable-component-update',
+    '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
+    '--user-data-dir=' + browserRoot + '/' + id];
+  if (process.env.SANDBOX_NETWORK_MODE !== 'unrestricted')
+    command.push('--proxy-server=http://127.0.0.1:3128', '--proxy-bypass-list=<-loopback>');
+  return [...command, 'about:blank'];
+}
+
+export async function verifyBrowserSocket(id, socket, root = browserRoot) {
+  // Bind this established connection to the immutable image binary and exact launch
+  // arguments. A writable DevToolsActivePort file alone cannot identify its owner.
+  const lock = await readlink(root + '/' + id + '/SingletonLock');
+  const pid = /-(\d+)$/.exec(lock)?.[1];
+  if (!pid) throw new Error('Browser process is unavailable');
+  const processPath = '/proc/' + pid;
+  const expected = chromiumCommand(id);
+  if (await readlink(processPath + '/exe') !== expected[0] ||
+      await readFile(processPath + '/cmdline', 'utf8') !== expected.join('\0') + '\0')
+    throw new Error('Viewer endpoint is not the packaged browser');
+  const address = port => '0100007F:' + port.toString(16).toUpperCase().padStart(4, '0');
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const rows = (await readFile('/proc/net/tcp', 'utf8')).trim().split('\n').slice(1);
+    const row = rows.map(line => line.trim().split(/\s+/)).find(fields =>
+      fields[1] === address(socket.remotePort) && fields[2] === address(socket.localPort) && fields[3] === '01');
+    if (row && row[9] !== '0') {
+      const descriptors = await readdir(processPath + '/fd');
+      for (const fd of descriptors) {
+        try {
+          if (await readlink(processPath + '/fd/' + fd) === 'socket:[' + row[9] + ']') return;
+        } catch { /* A browser file descriptor can close while being inspected. */ }
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error('Viewer connection does not belong to this browser');
+}
 export async function bootStamp() {
   const stat = await readFile('/proc/1/stat', 'utf8');
   return (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim()
@@ -52,6 +92,9 @@ async function main() {
     const port = await endpoint(process.argv[3]);
     const socket = createConnection({ host: '127.0.0.1', port });
     socket.on('error', () => process.exit(1));
+    await once(socket, 'connect');
+    try { await verifyBrowserSocket(process.argv[3], socket); }
+    catch (error) { socket.destroy(); throw error; }
     // EOF on stdin only closes the write half; Chromium can still send its response.
     process.stdin.pipe(socket);
     socket.pipe(process.stdout);

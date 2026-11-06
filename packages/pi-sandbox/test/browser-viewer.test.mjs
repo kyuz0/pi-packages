@@ -18,3 +18,15 @@ test('viewer links are session-specific and reject stale container descriptors',
     await assert.rejects(viewerLink(id, root), /Reopen this sandbox/);
   } finally { await rm(root, {recursive:true,force:true}); }
 });
+
+test('a substituted listener cannot impersonate the packaged Chromium process', async () => {
+  const { symlink, mkdir } = await import('node:fs/promises');
+  const { verifyBrowserSocket } = await import('../src/browser/viewer.mjs');
+  const root = await mkdtemp(tmpdir() + '/pi-viewer-impostor-');
+  const id = 'a'.repeat(32);
+  try {
+    await mkdir(root + '/' + id);
+    await symlink('host-' + process.pid, root + '/' + id + '/SingletonLock');
+    await assert.rejects(verifyBrowserSocket(id, {localPort:1234,remotePort:2345}, root), /not the packaged browser/);
+  } finally { await rm(root, {recursive:true,force:true}); }
+});

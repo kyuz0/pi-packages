@@ -4,7 +4,7 @@ import { mkdir, rm, copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { randomBytes } from 'node:crypto';
-import { browserRoot, viewerLink } from './viewer.mjs';
+import { browserRoot, viewerLink, chromiumCommand } from './viewer.mjs';
 import { BetterWright } from 'betterwright';
 
 export class SandboxBrowser {
@@ -27,15 +27,8 @@ export class SandboxBrowser {
       await mkdir(runtime, { recursive: true, mode: 0o700 });
       await copyFile('/opt/betterwright/adblock-cache/ad-blocker-2.18.2.bin',
         join(runtime, 'ad-blocker-2.18.2.bin'));
-      const args = ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage',
-        '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
-        '--disable-component-update', '--remote-debugging-address=127.0.0.1',
-        '--remote-debugging-port=0', '--user-data-dir=' + this.#profile];
-      if (process.env.SANDBOX_NETWORK_MODE !== 'unrestricted') {
-        args.push('--proxy-server=http://127.0.0.1:3128', '--proxy-bypass-list=<-loopback>');
-      }
-      this.#process = spawn('/opt/betterwright/.betterwright/chromium/linux-x64/betterchromium',
-        [...args, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+      const [binary, ...args] = chromiumCommand(this.#id);
+      this.#process = spawn(binary, args, { stdio: ['ignore', 'ignore', 'pipe'] });
       process.once('exit', this.#onExit);
       const endpoint = await new Promise((resolve, reject) => {
         const lines = createInterface({ input: this.#process.stderr });
