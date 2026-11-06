@@ -35,6 +35,7 @@ export type PiSandboxConfig = {
   };
   filesystem: {
     additionalAllowRead: readonly string[];
+    additionalWriteRoots: readonly string[];
   };
   network: NetworkConfig & { readonly strictAllowlist: boolean };
   hostIPC: HostIPCConfig;
@@ -55,6 +56,7 @@ export const DEFAULT_PI_SANDBOX_CONFIG: Readonly<PiSandboxConfig> = Object.freez
     }),
     filesystem: Object.freeze({
       additionalAllowRead: Object.freeze([]),
+      additionalWriteRoots: Object.freeze([]),
     }),
     network: Object.freeze({
       allowedDomains: Object.freeze([]),
@@ -142,6 +144,7 @@ export type PartialPiSandboxConfig = {
   };
   filesystem?: {
     additionalAllowRead?: readonly string[];
+    additionalWriteRoots?: readonly string[];
   };
   network?: Partial<NetworkConfig>;
   hostIPC?: Partial<HostIPCConfig>;
@@ -232,7 +235,7 @@ export function parsePiSandboxConfigRaw(value: unknown): PartialPiSandboxConfig 
     }
     rejectUnknownKeys(
       value.filesystem,
-      ["additionalAllowRead"],
+      ["additionalAllowRead", "additionalWriteRoots"],
       "filesystem",
     );
     const additionalAllowRead = value.filesystem.additionalAllowRead;
@@ -255,6 +258,13 @@ export function parsePiSandboxConfigRaw(value: unknown): PartialPiSandboxConfig 
       };
     } else {
       parsedFilesystem = {};
+    }
+    const roots = value.filesystem.additionalWriteRoots;
+    if (roots !== undefined) {
+      if (!Array.isArray(roots) || roots.some(path => typeof path !== "string" || !isAbsolute(path) || path.trim() === "")) {
+        throw new Error("invalid pi-sandbox configuration: filesystem.additionalWriteRoots must be an array of absolute paths");
+      }
+      parsedFilesystem.additionalWriteRoots = [...new Set(roots)];
     }
   }
 
@@ -422,6 +432,7 @@ function resolvePiSandboxConfig(raw: PartialPiSandboxConfig): PiSandboxConfig {
         : {}),
     },
     filesystem: {
+      additionalWriteRoots: [...(raw.filesystem?.additionalWriteRoots ?? [])],
       additionalAllowRead: [
         ...(raw.filesystem?.additionalAllowRead ??
           DEFAULT_PI_SANDBOX_CONFIG.filesystem.additionalAllowRead),
@@ -457,6 +468,7 @@ function defaultPiSandboxConfig(): PiSandboxConfig {
       provider: DEFAULT_PI_SANDBOX_CONFIG.subagents.provider,
     },
     filesystem: {
+      additionalWriteRoots: [],
       additionalAllowRead: [
         ...DEFAULT_PI_SANDBOX_CONFIG.filesystem.additionalAllowRead,
       ],
@@ -548,6 +560,8 @@ export function mergePiSandboxConfigs(
         : {}),
     },
     filesystem: {
+      // Projects cannot widen the trusted write boundary.
+      additionalWriteRoots: [...trusted.filesystem.additionalWriteRoots],
       additionalAllowRead: [
         ...new Set([
           ...trusted.filesystem.additionalAllowRead,

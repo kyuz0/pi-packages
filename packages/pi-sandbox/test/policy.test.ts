@@ -182,3 +182,15 @@ test("legacy programmatic policies without strictAllowlist preserve approval beh
   delete policy.network.strictAllowlist;
   assert.equal(toSandboxRuntimeConfig(policy).network.strictAllowlist, false);
 });
+
+
+test("trusted write roots retain each root's configuration and secret protections", () => {
+  const policy = createDefaultPolicy("/workspace/app", {additionalWriteRoots: ["/workspace", "/mnt/data"]});
+  assert.deepEqual(policy.filesystem.allowWrite, ["/workspace/app", "/workspace", "/mnt/data", "/dev/null"]);
+  for (const root of ["/workspace/app", "/workspace", "/mnt/data"]) {
+    assert(policy.filesystem.denyWrite.includes(join(root, ".pi/pi-auto-review.json")));
+    assert(policy.filesystem.denyWrite.includes(join(root, ".pi/extensions/pi-sandbox/config.json")));
+    assert(policy.filesystem.denyWrite.includes(join(root, ".env")));
+  }
+  assert(policy.filesystem.denyWrite.includes(join(homedir(), ".pi/agent/extensions")));
+});

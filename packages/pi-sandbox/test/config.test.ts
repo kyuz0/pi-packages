@@ -56,13 +56,13 @@ test("defaults to the builtin provider when configuration is absent", () => {
   try {
     assert.deepEqual(loadPiSandboxConfig({ path: join(root, "missing.json") }), {
       subagents: { provider: "builtin" },
-      filesystem: { additionalAllowRead: [] },
+      filesystem: { additionalWriteRoots: [], additionalAllowRead: [] },
       network: defaultNetwork,
       hostIPC: defaultHostIPC,
     });
     assert.deepEqual(loadPiSandboxConfig({ home: root, cwd: root }), {
       subagents: { provider: "builtin" },
-      filesystem: { additionalAllowRead: [] },
+      filesystem: { additionalWriteRoots: [], additionalAllowRead: [] },
       network: defaultNetwork,
       hostIPC: defaultHostIPC,
     });
@@ -93,7 +93,7 @@ test("loads the extension-local config and supports project-level config merge",
     );
     assert.deepEqual(loadPiSandboxConfig({ home: root, cwd: workspace }), {
       subagents: { provider: "off" },
-      filesystem: { additionalAllowRead: ["/opt/global-bin"] },
+      filesystem: { additionalWriteRoots: [], additionalAllowRead: ["/opt/global-bin"] },
       network: {
         allowedDomains: ["github.com"],
         deniedDomains: ["uploads.github.com"],
@@ -126,6 +126,7 @@ test("loads the extension-local config and supports project-level config merge",
     assert.deepEqual(merged, {
       subagents: { provider: "off" },
       filesystem: {
+        additionalWriteRoots: [],
         additionalAllowRead: ["/opt/global-bin", "/home/erich/.pi"],
       },
       network: {
@@ -151,7 +152,7 @@ test("accepts builtin and off without external protection settings", () => {
       parsePiSandboxConfig({ subagents: { provider } }),
       {
         subagents: { provider },
-        filesystem: { additionalAllowRead: [] },
+        filesystem: { additionalWriteRoots: [], additionalAllowRead: [] },
         network: defaultNetwork,
         hostIPC: defaultHostIPC,
       },
@@ -191,19 +192,19 @@ test("pi-subagents requires native background protection and a canonical whiteli
 test("defaults omitted sections to their secure defaults", () => {
   assert.deepEqual(parsePiSandboxConfig({}), {
     subagents: { provider: "builtin" },
-    filesystem: { additionalAllowRead: [] },
+    filesystem: { additionalWriteRoots: [], additionalAllowRead: [] },
     network: defaultNetwork,
     hostIPC: defaultHostIPC,
   });
   assert.deepEqual(parsePiSandboxConfig({ subagents: {} }), {
     subagents: { provider: "builtin" },
-    filesystem: { additionalAllowRead: [] },
+    filesystem: { additionalWriteRoots: [], additionalAllowRead: [] },
     network: defaultNetwork,
     hostIPC: defaultHostIPC,
   });
   assert.deepEqual(parsePiSandboxConfig({ filesystem: {} }), {
     subagents: { provider: "builtin" },
-    filesystem: { additionalAllowRead: [] },
+    filesystem: { additionalWriteRoots: [], additionalAllowRead: [] },
     network: defaultNetwork,
     hostIPC: defaultHostIPC,
   });
@@ -217,6 +218,7 @@ test("accepts unique absolute additional read paths", () => {
   assert.deepEqual(
     parsePiSandboxConfig({
       filesystem: {
+        additionalWriteRoots: [],
         additionalAllowRead: [
           "/home/user/.local/bin/rtk",
           "/home/user/.local/bin/rtk",
@@ -227,6 +229,7 @@ test("accepts unique absolute additional read paths", () => {
     {
       subagents: { provider: "builtin" },
       filesystem: {
+        additionalWriteRoots: [],
         additionalAllowRead: [
           "/home/user/.local/bin/rtk",
           "/opt/tools/helper",
@@ -253,7 +256,7 @@ test("accepts and normalizes the host-IPC configuration", () => {
     }),
     {
       subagents: { provider: "builtin" },
-      filesystem: { additionalAllowRead: [] },
+      filesystem: { additionalWriteRoots: [], additionalAllowRead: [] },
       network: defaultNetwork,
       hostIPC: {
         mode: "ask",
@@ -417,7 +420,7 @@ test("rejects unsafe additional read path shapes", () => {
   assert.throws(
     () =>
       parsePiSandboxConfig({
-        filesystem: { additionalAllowRead: [], allowWrite: ["/tmp"] },
+        filesystem: { additionalWriteRoots: [], additionalAllowRead: [], allowWrite: ["/tmp"] },
       }),
     /unknown filesystem key: allowWrite/,
   );
@@ -474,7 +477,7 @@ test("rejects malformed configuration instead of using defaults", () => {
 test("mergePiSandboxConfigs correctly merges array unions and scalar overrides", () => {
   const base = parsePiSandboxConfig({
     subagents: { provider: "builtin" },
-    filesystem: { additionalAllowRead: ["/base/read"] },
+    filesystem: { additionalWriteRoots: [], additionalAllowRead: ["/base/read"] },
     network: { allowedDomains: ["base.com"], deniedDomains: ["bad.base.com"] },
     hostIPC: { mode: "off", preflightCommandPrefixes: ["ls"], retryOnUnixSocketError: false },
   });
@@ -484,7 +487,7 @@ test("mergePiSandboxConfigs correctly merges array unions and scalar overrides",
       protection: "native-background-tools",
       allowedNativeAgents: ["worker"],
     },
-    filesystem: { additionalAllowRead: ["/project/read", "/base/read"] },
+    filesystem: { additionalWriteRoots: [], additionalAllowRead: ["/project/read", "/base/read"] },
     network: { allowedDomains: ["project.com"], deniedDomains: [] },
     hostIPC: { mode: "ask", preflightCommandPrefixes: ["tmux"], retryOnUnixSocketError: true },
   });
@@ -499,4 +502,12 @@ test("mergePiSandboxConfigs correctly merges array unions and scalar overrides",
   assert.equal(merged.hostIPC.mode, "ask");
   assert.deepEqual(merged.hostIPC.preflightCommandPrefixes, ["ls", "tmux"]);
   assert.equal(merged.hostIPC.retryOnUnixSocketError, true);
+});
+
+
+test("project configuration cannot add trusted write roots", () => {
+  const trusted = parsePiSandboxConfig({filesystem: {additionalWriteRoots: ["/workspace", "/mnt/data"]}});
+  const merged = mergePiSandboxConfigs(trusted, {filesystem: {additionalWriteRoots: ["/home"]}});
+  assert.deepEqual(merged.filesystem.additionalWriteRoots, ["/workspace", "/mnt/data"]);
+  assert.throws(() => parsePiSandboxConfig({filesystem: {additionalWriteRoots: ["relative"]}}));
 });

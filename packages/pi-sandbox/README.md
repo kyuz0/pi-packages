@@ -355,3 +355,10 @@ process cleanup, concurrency, and cross-platform orchestration tests.
 
 Sandbox Runtime is an Apache-2.0 licensed research preview:
 <https://github.com/anthropic-experimental/sandbox-runtime>.
+
+### Additional writable folders
+
+Trusted configuration can set `filesystem.additionalWriteRoots` to absolute paths.
+Each root receives the same configuration and secret-file protections as the
+working directory. Project configuration cannot add write roots. In a managed
+container, configure these in `/opt/pi-security/config/sandbox.json`.

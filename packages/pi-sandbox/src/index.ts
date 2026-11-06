@@ -133,6 +133,7 @@ function sandboxOperations(
   ctx: ExtensionContext,
   turnIndex: () => number,
   additionalAllowRead: readonly string[],
+  additionalWriteRoots: readonly string[],
   network: NetworkConfig,
   hostIPC: HostIPCConfig,
   sandbox?: PiSandboxExtensionOptions["sandbox"],
@@ -185,7 +186,7 @@ function sandboxOperations(
             onData: options.onData,
             onStderr,
             shellPath,
-            policy: createDefaultPolicy(cwd, { additionalAllowRead, network }),
+            policy: createDefaultPolicy(cwd, { additionalAllowRead, additionalWriteRoots, network }),
             review: async (trap) => {
               const result = await approveSandboxTrap(trap, approvalContext);
               if (result.action === "deny" && result.reason) {
@@ -243,6 +244,7 @@ async function performRegistration(
     ? await loadPiSubagentsNativeRuntime(allowedNativeAgents!)
     : undefined;
   const additionalAllowRead = config.filesystem.additionalAllowRead;
+  const additionalWriteRoots = config.filesystem.additionalWriteRoots;
   const network = config.network;
   const subagents =
     subagentProvider === "builtin"
@@ -267,6 +269,7 @@ async function performRegistration(
           ctx,
           () => currentTurn,
           additionalAllowRead,
+          additionalWriteRoots,
           network,
           hostIPC,
           options.sandbox,
@@ -356,7 +359,7 @@ async function performRegistration(
           cwd: ctx.cwd,
           model: params.model,
           tools: pi.getActiveTools().filter((name) => name !== "subagent"),
-          policy: createDefaultPolicy(ctx.cwd, { additionalAllowRead, network }),
+          policy: createDefaultPolicy(ctx.cwd, { additionalAllowRead, additionalWriteRoots, network }),
           sandbox: options.sandbox,
           review: async (trap: Parameters<typeof approveSandboxTrap>[0]) =>
             (await approveSandboxTrap(trap, approvalContext)).action,
@@ -522,6 +525,7 @@ async function performRegistration(
       ctx,
       () => currentTurn,
       additionalAllowRead,
+      additionalWriteRoots,
       network,
       hostIPC,
       options.sandbox,

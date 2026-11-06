@@ -125,6 +125,7 @@ export type SandboxPolicy = {
 
 export type CreateDefaultPolicyOptions = {
   additionalAllowRead?: readonly string[];
+  additionalWriteRoots?: readonly string[];
   network?: NetworkConfig;
 };
 
@@ -231,6 +232,7 @@ export function createDefaultPolicy(
   options: CreateDefaultPolicyOptions = {},
 ): SandboxPolicy {
   const workspace = resolve(cwd);
+  const writeRoots = [...new Set([workspace, ...(options.additionalWriteRoots ?? []).map(p => resolve(p))])];
   const home = resolve(homedir());
   const runtimePaths = runtimeFilesystemPaths();
   const denyRead = home === parse(home).root ? [] : [home];
@@ -250,10 +252,13 @@ export function createDefaultPolicy(
         "/dev/null",
         ...(options.additionalAllowRead ?? []),
       ],
-      allowWrite: [workspace, "/dev/null"],
+      allowWrite: [...writeRoots, "/dev/null"],
       denyWrite: [
-        join(workspace, ".pi", "pi-auto-review.json"),
-        join(workspace, PROJECT_PI_SANDBOX_CONFIG_PATH),
+        ...writeRoots.flatMap(root => [
+          join(root, ".pi", "pi-auto-review.json"),
+          join(root, PROJECT_PI_SANDBOX_CONFIG_PATH),
+          ...createWorkspaceSecretDenyWritePaths(root),
+        ]),
         join(home, ".pi", "agent", "logs"),
         // Prevent the sandbox from installing or rewriting trusted extensions
         // (includes ~/.pi/agent/extensions/pi-sandbox/config.json).
@@ -268,7 +273,6 @@ export function createDefaultPolicy(
         ),
         ...(packageIsInWorkspace ? [] : [PACKAGE_ROOT]),
         ...runtimePaths.denyWrite,
-        ...createWorkspaceSecretDenyWritePaths(workspace),
       ],
     },
     network: {
