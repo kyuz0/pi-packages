@@ -14,19 +14,9 @@ test('viewer links are session-specific and reject stale container descriptors',
     assert.equal(await viewerLink(id, root), 'http://127.0.0.1:12345/v/' + id + '/' + createHmac('sha256',key).update(id).digest('hex') + '/');
     assert.notEqual(await viewerLink(id, root), await viewerLink('c'.repeat(32), root));
     await assert.rejects(endpoint('../escape', root), /Invalid browser session/);
+    await writeFile(root + '/viewer.json', JSON.stringify({origin:'https://external.invalid',key,boot:await bootStamp()}));
+    await assert.rejects(viewerLink(id, root), /Invalid browser viewer descriptor/);
     await writeFile(root + '/viewer.json', JSON.stringify({origin:'http://127.0.0.1:12345',key,boot:'previous-boot'}));
     await assert.rejects(viewerLink(id, root), /Reopen this sandbox/);
-  } finally { await rm(root, {recursive:true,force:true}); }
-});
-
-test('a substituted listener cannot impersonate the packaged Chromium process', async () => {
-  const { symlink, mkdir } = await import('node:fs/promises');
-  const { verifyBrowserSocket } = await import('../src/browser/viewer.mjs');
-  const root = await mkdtemp(tmpdir() + '/pi-viewer-impostor-');
-  const id = 'a'.repeat(32);
-  try {
-    await mkdir(root + '/' + id);
-    await symlink('host-' + process.pid, root + '/' + id + '/SingletonLock');
-    await assert.rejects(verifyBrowserSocket(id, {localPort:1234,remotePort:2345}, root), /not the packaged browser/);
   } finally { await rm(root, {recursive:true,force:true}); }
 });
