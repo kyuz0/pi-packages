@@ -548,6 +548,7 @@ export function notifyUserReview(
 
 export type UserReviewWidgetData = UserReviewEntryData & {
   phase: "reviewing" | "waiting_user" | "complete";
+  meta?: Pick<UserReviewNoticeInput, "model" | "usage" | "durationMs" | "attempts">;
 };
 
 /**
@@ -600,6 +601,7 @@ export function buildUserReviewWidgetData(
 ): UserReviewWidgetData {
   return {
     phase: "complete",
+    meta: { model: input.model, usage: input.usage, durationMs: input.durationMs, attempts: input.attempts },
     ...buildUserReviewEntryData(input),
   };
 }
@@ -717,21 +719,24 @@ function permissionDecisionReason(record: Record<string, unknown>): string {
     ? `${reason} Matched rule: ${record.matchedPattern}` : reason;
 }
 
-/** Owns the single live widget and rejects stale concurrent completions. */
+type ReviewDisplay = {
+  requestId: string;
+  generation: number;
+  ctx: ExtensionContext;
+  data: UserReviewWidgetData;
+  notice?: UserReviewNotice;
+  input: { surface: string; target?: string; model?: string };
+  permissionFinal?: boolean;
+};
+
+/** One TUI widget; one terminal notification per RPC permission request. */
 export class UserReviewWidgetController {
   #generation = 0;
   #dismissTimer: ReturnType<typeof setTimeout> | undefined;
   /** Set while a `ctx.ui` prompt blocks the session (ui_prompt span). */
   #waiting?: { kind?: unknown; title?: unknown };
-  #current?: {
-    requestId: string;
-    generation: number;
-    ctx: ExtensionContext;
-    data?: UserReviewWidgetData;
-    notice?: UserReviewNotice;
-    input: { surface: string; target?: string; model?: string };
-    permissionFinal?: boolean;
-  };
+  #current?: ReviewDisplay;
+  #rpcRequests = new Map<string, ReviewDisplay>();
   constructor(
     private readonly successTtlMs = USER_REVIEW_SUCCESS_WIDGET_TTL_MS,
   ) {}
@@ -742,8 +747,13 @@ export class UserReviewWidgetController {
     input: { surface: string; target?: string; model?: string },
   ): number {
     const generation = ++this.#generation;
+    const display = { requestId, generation, ctx, input, data: buildUserReviewingWidgetData(input) };
+    if (!ctx.hasUI || ctx.mode !== "tui") {
+      this.#rpcRequests.set(requestId, display);
+      return generation;
+    }
     this.#cancelDismiss();
-    this.#current = { requestId, generation, ctx, input, data: buildUserReviewingWidgetData(input) };
+    this.#current = display;
     this.#render();
     return generation;
   }
@@ -783,7 +793,10 @@ export class UserReviewWidgetController {
     data: UserReviewWidgetData,
   ): void {
     if (!ctx.hasUI || ctx.mode !== "tui") {
-      notifyUserReview(ctx, notice);
+      const pending = this.#rpcRequests.get(requestId);
+      if (pending?.generation === generation) {
+        this.#rpcRequests.set(requestId, { ...pending, data, notice });
+      }
       return;
     }
     if (!this.#isCurrent(requestId, generation) || this.#current?.permissionFinal) return;
@@ -798,7 +811,8 @@ export class UserReviewWidgetController {
   permissionDecision(event: unknown): void {
     if (!event || typeof event !== "object" || Array.isArray(event)) return;
     const record = event as Record<string, unknown>;
-    const current = this.#current;
+    const rpc = typeof record.requestId === "string" ? this.#rpcRequests.get(record.requestId) : undefined;
+    const current = rpc ?? this.#current;
     if (
       typeof record.requestId !== "string" ||
       record.requestId !== current?.requestId ||
@@ -810,6 +824,7 @@ export class UserReviewWidgetController {
     const denied = record.result === "deny";
     const input = {
       ...current.input,
+      ...current.data.meta,
       outcome: denied ? "deny" as const : "allow" as const,
       rationale: permissionDecisionReason(record),
     };
@@ -821,6 +836,11 @@ export class UserReviewWidgetController {
        (record.result === "allow" && current.data.outcome === "allow"));
     const data = retainReview ? current.data : buildUserReviewWidgetData(input);
     const notice = retainReview && current.notice ? current.notice : buildUserReviewNotice(input);
+    if (rpc) {
+      this.#rpcRequests.delete(current.requestId);
+      notifyUserReview(current.ctx, notice);
+      return;
+    }
     this.#cancelDismiss();
     this.#current = { ...current, permissionFinal: true, data, notice };
     if (!setWidget(current.ctx, data)) notifyUserReview(current.ctx, notice);
@@ -829,6 +849,14 @@ export class UserReviewWidgetController {
 
   clear(ctx?: ExtensionContext): void {
     ++this.#generation;
+    for (const pending of this.#rpcRequests.values()) {
+      notifyUserReview(pending.ctx, buildUserReviewNotice({
+        ...pending.input,
+        outcome: "unavailable",
+        rationale: "The session ended or changed before the permission check returned a final decision.",
+      }));
+    }
+    this.#rpcRequests.clear();
     this.#cancelDismiss();
     this.#waiting = undefined;
     const current = this.#current;

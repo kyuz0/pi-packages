@@ -262,7 +262,7 @@ function widgetHarness(mode = "tui", successTtlMs = 0) {
     content: unknown;
     options: unknown;
   }> = [];
-  const notifications: unknown[] = [];
+  const notifications: { message: string; type: string }[] = [];
   const ctx = {
     hasUI: true,
     mode,
@@ -653,7 +653,7 @@ test("widget completion falls back to notify when setWidget fails", () => {
   assert.equal(harness.notifications.length, 1);
 });
 
-test("non-TUI completions keep independent notification behavior", () => {
+test("RPC completions wait for independent final permission decisions", () => {
   const harness = widgetHarness("rpc");
   const first = harness.controller.begin("request-a", harness.ctx as never, {
     surface: "bash",
@@ -675,6 +675,10 @@ test("non-TUI completions keep independent notification behavior", () => {
     );
   }
   assert.equal(harness.widgets.length, 0);
+  assert.equal(harness.notifications.length, 0);
+  for (const requestId of ["request-b", "request-a"]) {
+    harness.controller.permissionDecision({ requestId, result: "allow" });
+  }
   assert.equal(harness.notifications.length, 2);
 });
 
@@ -737,4 +741,52 @@ test("final authorizer denial retains its actual explanation and token usage", (
   assert.match(text, /delete files outside the approved directory/);
   assert.match(text, /120 toks out/);
   h.controller.clear();
+});
+
+for (const [outcome, result, resolution, expected] of [
+  ["allow", "allow", "authorizer_allowed", /Specific reviewer reason/],
+  ["deny", "deny", "authorizer_denied", /Specific reviewer reason/],
+  ["unavailable", "deny", "authorizer_denied", /Specific reviewer reason/],
+  ["allow", "deny", "policy_deny", /Matched rule: blocked.example/],
+  ["auto_confirm", "deny", "user_denied", /approval dialog returned a denial/],
+] as const) {
+  test(`RPC ${outcome}/${resolution} emits one final notice with reason and usage`, () => {
+    const h = widgetHarness("rpc");
+    const g = h.controller.begin("r", h.ctx as never, { surface: "fetch_content" });
+    const input = { outcome, surface: "fetch_content", rationale: "Specific reviewer reason",
+      model: "provider/reviewer", usage: { availability: "reported" as const, output: 120 } };
+    h.controller.complete("r", g, h.ctx as never, buildUserReviewNotice(input), buildUserReviewWidgetData(input));
+    assert.equal(h.notifications.length, 0);
+    const event = { requestId: "r", result, resolution, matchedPattern: "blocked.example" };
+    h.controller.permissionDecision(event);
+    h.controller.permissionDecision(event);
+    h.controller.complete("r", g, h.ctx as never, buildUserReviewNotice(input), buildUserReviewWidgetData(input));
+    h.controller.clear();
+    assert.equal(h.notifications.length, 1);
+    assert.match(h.notifications[0].message, expected);
+    assert.match(h.notifications[0].message, /120 toks out/);
+    assert.match(h.notifications[0].message, /reviewer/);
+  });
+}
+
+test("RPC final decision before review completion cannot be overwritten", () => {
+  const h = widgetHarness("rpc");
+  const g = h.controller.begin("r", h.ctx as never, { surface: "fetch_content" });
+  h.controller.permissionDecision({ requestId: "r", result: "deny", resolution: "gate_error" });
+  const input = { outcome: "allow" as const, surface: "fetch_content" };
+  h.controller.complete("r", g, h.ctx as never, buildUserReviewNotice(input), buildUserReviewWidgetData(input));
+  assert.equal(h.notifications.length, 1);
+  assert.match(h.notifications[0].message, /permission check or escalation failed/);
+});
+
+test("RPC session clear reports an unfinished decision without claiming approval", () => {
+  const h = widgetHarness("rpc");
+  const g = h.controller.begin("r", h.ctx as never, { surface: "fetch_content" });
+  const input = { outcome: "allow" as const, surface: "fetch_content" };
+  h.controller.complete("r", g, h.ctx as never, buildUserReviewNotice(input), buildUserReviewWidgetData(input));
+  h.controller.clear();
+  h.controller.permissionDecision({ requestId: "r", result: "allow" });
+  assert.equal(h.notifications.length, 1);
+  assert.match(h.notifications[0].message, /before the permission check returned a final decision/);
+  assert.doesNotMatch(h.notifications[0].message, /allowed/);
 });
