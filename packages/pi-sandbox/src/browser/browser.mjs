@@ -1,13 +1,16 @@
 /** Chromium provider using the configured container proxy. */
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, rm, copyFile } from 'node:fs/promises';
+import { mkdir, rm, copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { randomBytes } from 'node:crypto';
+import { browserRoot, viewerLink } from './viewer.mjs';
 import { BetterWright } from 'betterwright';
 
 export class SandboxBrowser {
   vault = false;
   downloadPolicy = 'ask';
+  #id = randomBytes(16).toString('hex');
   #pending;
   #client;
   #process;
@@ -15,9 +18,10 @@ export class SandboxBrowser {
   #onExit = () => this.#process?.kill('SIGKILL');
 
   async #start() {
-    const root = '/home/node/.cache/pi-browser';
+    const root = browserRoot;
     await mkdir(root, { recursive: true, mode: 0o700 });
-    this.#profile = await mkdtemp(join(root, 'session-'));
+    this.#profile = join(root, this.#id);
+    await mkdir(this.#profile, { mode: 0o700 });
     try {
       const runtime = join(this.#profile, 'browser/runtime');
       await mkdir(runtime, { recursive: true, mode: 0o700 });
@@ -65,6 +69,12 @@ export class SandboxBrowser {
   async run(code, options) {
     this.#pending ??= this.#start().catch(error => { this.#pending = undefined; throw error; });
     return (await this.#pending).run(code, options);
+  }
+
+  async viewerLink() {
+    this.#pending ??= this.#start().catch(error => { this.#pending = undefined; throw error; });
+    await this.#pending;
+    return viewerLink(this.#id);
   }
 
   async #cleanup() {
