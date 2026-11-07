@@ -34,7 +34,7 @@ export class SandboxBrowser {
       if (process.env.SANDBOX_NETWORK_MODE !== 'unrestricted') {
         args.push('--proxy-server=http://127.0.0.1:3128', '--proxy-bypass-list=<-loopback>');
       }
-      this.#process = spawn('/opt/betterwright/.betterwright/chromium/linux-x64/betterchromium',
+      this.#process = spawn('/opt/betterwright/chromium',
         [...args, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
       process.once('exit', this.#onExit);
       const endpoint = await new Promise((resolve, reject) => {

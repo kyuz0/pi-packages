@@ -18,7 +18,7 @@ export async function viewerLink(id, root = browserRoot) {
   catch { throw new Error('Reopen this sandbox from the launcher to start its browser viewer.'); }
   if (descriptor.boot !== await bootStamp())
     throw new Error('Reopen this sandbox from the launcher to refresh its browser viewer.');
-  if (!/^http:\/\/127(?:\.(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])){3}:[0-9]{1,5}$/.test(descriptor.origin) ||
+  if (!/^http:\/\/(?:127(?:\.(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])){3}|sbx-[a-f0-9]{24}\.localhost):[0-9]{1,5}$/.test(descriptor.origin) ||
       !/^[a-f0-9]{64}$/.test(descriptor.key)) throw new Error('Invalid browser viewer descriptor');
   const token = createHmac('sha256', descriptor.key).update(id).digest('hex');
   return descriptor.origin + '/v/' + id + '/' + token + '/';
@@ -49,7 +49,7 @@ async function main() {
       if (input.length > 2048) throw new Error('Descriptor too large');
     }
     const value = JSON.parse(input);
-    if (!/^http:\/\/127(?:\.(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])){3}:[0-9]{1,5}$/.test(value.origin) || !/^[a-f0-9]{64}$/.test(value.key))
+    if (!/^http:\/\/(?:127(?:\.(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])){3}|sbx-[a-f0-9]{24}\.localhost):[0-9]{1,5}$/.test(value.origin) || !/^[a-f0-9]{64}$/.test(value.key))
       throw new Error('Invalid viewer descriptor');
     await mkdir(browserRoot, { recursive: true, mode: 0o700 });
     const file = browserRoot + '/viewer.json';

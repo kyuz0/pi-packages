@@ -20,3 +20,18 @@ test('viewer links are session-specific and reject stale container descriptors',
     await assert.rejects(viewerLink(id, root), /Reopen this sandbox/);
   } finally { await rm(root, {recursive:true,force:true}); }
 });
+
+
+test('viewer accepts isolated localhost names but rejects lookalikes and external origins', async () => {
+  const root = await mkdtemp(tmpdir() + '/pi-viewer-');
+  const key = 'b'.repeat(64), id = 'a'.repeat(32);
+  const origin = 'http://sbx-' + 'c'.repeat(24) + '.localhost:12345';
+  try {
+    for (const candidate of [origin, origin.replace('.localhost', '.localhost.evil.test'),
+      origin.replace('sbx-', 'other-'), origin.replace('http:', 'https:')]) {
+      await writeFile(root + '/viewer.json', JSON.stringify({origin:candidate,key,boot:await bootStamp()}));
+      if (candidate === origin) assert.ok((await viewerLink(id, root)).startsWith(origin + '/v/'));
+      else await assert.rejects(viewerLink(id, root), /Invalid browser viewer descriptor/);
+    }
+  } finally { await rm(root, {recursive:true,force:true}); }
+});
