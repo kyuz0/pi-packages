@@ -66,7 +66,7 @@ export async function complete(
 ): Promise<ReviewResult> {
   const started = Date.now();
   const rawBranch = config.retainedContext ? ctx.sessionManager.getBranch() : undefined;
-  const snapshot = rawBranch ? retainedSnapshot(ctx.sessionManager.getSessionId(), rawBranch) : undefined;
+  const snapshot = rawBranch ? retainedSnapshot(ctx.sessionManager.getSessionId(), rawBranch, config.trustedQuestionTools) : undefined;
   const legacyTranscript = buildClassifierTranscript(
     ctx.sessionManager.buildContextEntries(),
     config,
@@ -76,7 +76,7 @@ export async function complete(
         reviewerContext?.userOverride?.originalRequestId,
     },
   );
-  const selectedTranscript = rawBranch ? withRetainedContext(legacyTranscript, rawBranch, config.maxReviewerInputTokens) : legacyTranscript;
+  const selectedTranscript = rawBranch ? withRetainedContext(legacyTranscript, rawBranch, config.maxReviewerInputTokens, config.trustedQuestionTools) : legacyTranscript;
   const transcript = applyReviewerInputBudget(
     request,
     selectedTranscript,
@@ -263,7 +263,7 @@ export async function complete(
         }
         try {
           decision = parseDecision(text);
-          if (decision.outcome === "allow" && snapshot && snapshot !== retainedSnapshot(ctx.sessionManager.getSessionId(), ctx.sessionManager.getBranch())) {
+          if (decision.outcome === "allow" && snapshot && snapshot !== retainedSnapshot(ctx.sessionManager.getSessionId(), ctx.sessionManager.getBranch(), config.trustedQuestionTools)) {
             decision = { outcome: "defer", risk_level: "high", user_authorization: "unknown", rationale: "The session changed during review; review the action again with current instructions." };
           }
         } catch (error) {

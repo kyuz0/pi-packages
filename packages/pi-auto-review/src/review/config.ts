@@ -16,6 +16,7 @@ import type { PolicyAuditConfig } from "../policy-audit/index.ts";
 export const DEFAULT_CONFIG: Config = {
   interactionMode: "automatic",
   retainedContext: true,
+  trustedQuestionTools: Object.freeze([]),
   reviewerConversation: true,
   investigationTools: false,
   model: "codex-auto-review",
@@ -43,6 +44,7 @@ export function validateConfig(value: unknown, source: string): Config {
   const allowedKeys = new Set([
     "interactionMode",
     "retainedContext",
+    "trustedQuestionTools",
     "reviewerConversation",
     "investigationTools",
     "model",
@@ -74,6 +76,11 @@ export function validateConfig(value: unknown, source: string): Config {
     if (config[key] && !config.retainedContext) throw new Error(`${key} requires retainedContext`);
   }
   if (config.investigationTools) throw new Error("Reviewer inspection tools are not supported");
+  if (!Array.isArray(config.trustedQuestionTools) || config.trustedQuestionTools.length > 16 ||
+      config.trustedQuestionTools.some(name => typeof name !== "string" || !/^[a-zA-Z][a-zA-Z0-9_-]{0,99}$/.test(name))) {
+    throw new Error("trustedQuestionTools must list trusted question tool names");
+  }
+  config.trustedQuestionTools = Object.freeze([...new Set(config.trustedQuestionTools)]);
   config.policyAudit = {
     ...DEFAULT_CONFIG.policyAudit,
     ...(raw.policyAudit as Partial<PolicyAuditConfig> | undefined),

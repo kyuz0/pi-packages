@@ -19,6 +19,8 @@ export type BoundedSurface = "external_directory" | "path";
 export type Config = {
   interactionMode?: "automatic" | "interactive";
   retainedContext?: boolean;
+  /** Trusted UI question tools using the structured questionnaire result schema. */
+  trustedQuestionTools?: readonly string[];
   reviewerConversation?: boolean;
   investigationTools?: boolean;
   /** Model id, provider/model, or "current" for the live Pi session model. */

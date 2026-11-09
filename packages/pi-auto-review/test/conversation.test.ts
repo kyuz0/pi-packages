@@ -138,3 +138,22 @@ test("skill instructions and older restrictions survive successive conversation 
  assert.match(wire,/Do not publish until I ask/);assert.match(wire,/Never send credentials/);
  assert.equal(wire.split("Never send credentials.").length-1,1);
 });
+
+
+test("each successive action receives original approval even without a new user message",async()=>{
+ const f=fixture();f.add("Run the read-only checks; no uploads.");await f.run();await f.run();
+ const context=f.seen.at(-1) as {messages:Array<{role:string;content:string}>};
+ const last=JSON.parse(context.messages.at(-1)!.content);
+ assert.match(JSON.stringify(last.evidence.parentOriginalMessages.messages),/Run the read-only checks; no uploads/);
+ assert.equal(last.evidence.userMessages,undefined);
+ assert.equal(JSON.stringify(context).split("Run the read-only checks; no uploads.").length-1,1);
+});
+test("a changed question answer invalidates an in-flight allow",async()=>{
+ const f=fixture();const q={question:"Run the check?",options:[{label:"Yes",description:"Run it"},{label:"No",description:"Stop"}]};
+ const call={id:"q",type:"message",message:{role:"assistant",content:[{type:"toolCall",id:"q1",name:"ask_user_question",arguments:{questions:[q]}}]}};
+ const answer={id:"a",type:"message",message:{role:"toolResult",toolName:"ask_user_question",toolCallId:"q1",isError:false,details:{cancelled:false,answers:[{questionIndex:0,question:q.question,kind:"option",answer:"Yes"}]}}};
+ f.setEntries([u("u","Please check"),call,answer] as never);
+ f.setNext(async()=>{answer.message.details.answers[0]!.answer="No";return response();});
+ const r=await f.run({trustedQuestionTools:["ask_user_question"]});
+ assert.equal(r.decision.outcome,"defer");assert.equal(r.summary.conversation?.committed,false);
+});

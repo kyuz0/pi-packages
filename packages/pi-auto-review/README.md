@@ -229,7 +229,9 @@ extend retention.
 not an expected response time. It covers model resolution, authentication and
 the model response. Provider-internal retries are disabled.
 
-The default conversation mode makes one model call per approval. Invalid
+The default conversation mode makes one model call per approval. Each action
+includes the selected original user instructions and answers; approval within
+their scope does not need to be repeated in a new chat message. Invalid
 output, unexpected tool calls, cancellation and provider failures never grant
 permission and do not commit a turn to reviewer history.
 
@@ -398,12 +400,14 @@ path makes one model request per review, without format retries.
 
 Original user messages, including expanded skills, are retained whole within
 the configured reviewer input budget (32,768 estimated tokens by default), with
-up to 2 KiB of nearby assistant replies for context. The full request, policy
+nearby assistant replies bounded by the same input budget. The full request, policy
 and evidence must fit that budget before a model is called. Pi's compaction summaries do
 not replace the original user instructions. Omissions are reported; a bounded
 window cannot guarantee enforcement of an instruction that is absent.
 
-New messages and actions are added to the reviewer's history. Parallel reviews
+Each current action includes the selected original instructions and trusted
+question answers. Earlier actions keep their request and verdict without
+duplicating those instructions. Parallel reviews
 use private forks; branch edits, model changes and configuration changes reset
 reuse. Before accepting a result, the controller checks that the parent history
 has not changed. When the input budget fills, it discards old review turns and
@@ -594,3 +598,12 @@ retains the original branch messages; adding its summary does not invalidate a
 review. New original instructions, edited messages, or changed branch evidence
 still invalidate the decision. Summaries cannot grant permission. Review attempts
 record stop reasons, token usage and configured budgets in session custom entries.
+
+### Answers from question tools
+
+A trusted host may configure `trustedQuestionTools: ["ask_user_question"]` for
+question tools using the structured questionnaire schema. The reviewer matches
+each result to its original question and retains the selected option or typed
+answer as user evidence. Cancelled dialogs, tool errors, unmatched results and
+ordinary tool text cannot grant permission. Only configure tools whose answer
+channel you trust; project configuration cannot add trusted question tools.

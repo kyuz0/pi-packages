@@ -1,7 +1,8 @@
+import { withQuestionAnswers } from "./question-answers.ts";
 import { createHash } from "node:crypto";
 import type { TranscriptResult } from "../policy.ts";
 
-export type RetainedMessage = { id: string; order: number; role: "user" | "assistant"; content: string };
+export type RetainedMessage = { id: string; order: number; role: "user" | "assistant"; content: string; source?: "trusted-question-tool" };
 export type RetainedContext = {
   messages: RetainedMessage[];
   omittedUserMessages: number;
@@ -25,9 +26,9 @@ function visibleText(content: unknown): { text: string; omitted: boolean } {
   return { text: text.join("\n"), omitted };
 }
 /** Only original messages on the active branch. Never promote a summary or custom message. */
-export function retainContext(entries: readonly unknown[], userBytes = 98_304, assistantBytes = 2048): RetainedContext {
+export function retainContext(entries: readonly unknown[], userBytes = 98_304, assistantBytes = 2048, trustedQuestionTools: readonly string[] = []): RetainedContext {
   const candidates: Array<RetainedMessage & { incomplete: boolean }> = [];
-  for (const [order, value] of entries.entries()) {
+  for (const [order, value] of withQuestionAnswers(entries, trustedQuestionTools).entries()) {
     const entry = object(value);
     const message = object(entry?.message);
     if (entry?.type !== "message" || typeof entry.id !== "string" || !message) continue;
@@ -36,7 +37,8 @@ export function retainContext(entries: readonly unknown[], userBytes = 98_304, a
     if (metadata?.["compaction.summary"] || metadata?.["branch.summary"]) continue;
     const content = visibleText(message.content);
     if (!content.text && !content.omitted) continue;
-    candidates.push({ id: entry.id, order, role: message.role, content: content.text, incomplete: content.omitted });
+    candidates.push({ id: entry.id, order, role: message.role, content: content.text, incomplete: content.omitted,
+      ...(entry.reviewerQuestionTool ? {source: "trusted-question-tool" as const} : {}) });
   }
   const selected: RetainedMessage[] = [];
   let omittedUserMessages = 0, omittedAssistantMessages = 0;
@@ -66,11 +68,11 @@ export function retainContext(entries: readonly unknown[], userBytes = 98_304, a
   return { messages: selected.sort((a,b) => a.order-b.order), omittedUserMessages, omittedNewestUserMessage, omittedAssistantMessages,
     source: "active-session-branch", provenance: "session-role-not-independent-human-attestation" };
 }
-export function retainedSnapshot(sessionId: string, entries: readonly unknown[]): string {
+export function retainedSnapshot(sessionId: string, entries: readonly unknown[], trustedQuestionTools: readonly string[] = []): string {
   // Compaction appends a summary but preserves original branch messages. Hash
   // original instruction evidence, never summaries or observational entries.
   // Full user contents and IDs detect edits, new restrictions and branch changes.
-  const evidence = entries.flatMap(value => {
+  const evidence = withQuestionAnswers(entries, trustedQuestionTools).flatMap(value => {
     const entry = object(value), message = object(entry?.message);
     if (entry?.type !== "message" || !message) return [];
     const metadata = object(message.metadata);
@@ -82,10 +84,10 @@ export function retainedSnapshot(sessionId: string, entries: readonly unknown[])
   });
   return createHash("sha256").update(sessionId).update(JSON.stringify(evidence)).digest("hex");
 }
-export function withRetainedContext(transcript: TranscriptResult, entries: readonly unknown[], maxReviewerInputTokens = 32_768): TranscriptResult {
+export function withRetainedContext(transcript: TranscriptResult, entries: readonly unknown[], maxReviewerInputTokens = 32_768, trustedQuestionTools: readonly string[] = []): TranscriptResult {
   // This is only a selection bound. The full serialized request and policy
   // must still pass applyReviewerInputBudget before any provider call.
-  const retainedContext = retainContext(entries, maxReviewerInputTokens * 3);
+  const retainedContext = retainContext(entries, maxReviewerInputTokens * 3, maxReviewerInputTokens, trustedQuestionTools);
   return { ...transcript, retainedContext,
     reviewerEvidence: { ...transcript.reviewerEvidence, userMessages: [] },
     selectedCandidates: transcript.selectedCandidates.filter(c => c.kind !== "user"),
