@@ -297,6 +297,8 @@ The extension publishes a process-local service at:
 Symbol.for("pi-auto-review:boundary-approval-broker")
 ```
 
+Each live session registers its own broker. Reviews and grants are routed by session ID; closing one session leaves other sessions available. Unknown or ambiguous session IDs are denied.
+
 Adapters should use the exported helper:
 
 ```ts

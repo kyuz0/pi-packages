@@ -6,7 +6,7 @@ import { createJiti } from 'jiti';
 const jiti = createJiti(import.meta.url);
 const extension = await jiti.import('../index.ts',{default:true});
 const { BoundaryApprovalBroker } = await jiti.import('../../pi-auto-review/src/broker/broker.ts');
-const symbol = Symbol.for('pi-auto-review:boundary-approval-broker');
+const { publishBoundaryBroker } = await jiti.import('../../pi-auto-review/src/broker/service.ts');
 
 for (const outcome of ['allow','deny','defer']) {
   test(`actual shell runs only after ${outcome === 'defer' ? 'explicit UI confirmation of a deferral' : outcome === 'allow' ? 'reviewer grant consumption' : 'approval (denial must never execute)'}`, async () => {
@@ -14,15 +14,15 @@ for (const outcome of ['allow','deny','defer']) {
     const outside=mkdtempSync('/tmp/escalation-execution-outside-');
     const file=join(outside,'probe');
     const command=`echo execution-ok > '${file}'`;
-    const original=globalThis[symbol];
+    let dispose;
     let prompted=false;
     try {
-      globalThis[symbol]=new BoundaryApprovalBroker({reviewer:async request=>{
+      dispose=publishBoundaryBroker(new BoundaryApprovalBroker({reviewer:async request=>{
         assert.equal(request.command,command);
         assert.equal(request.cwd,cwd);
         assert.equal(existsSync(file),false,'host must not run before review');
         return {outcome,riskLevel:'low',userAuthorization:'high',rationale:'Isolated test decision.'};
-      }});
+      }}), () => 'test-session');
       let tool;
       const entries=[];
       extension({on(){},registerTool(value){tool=value;},appendEntry(name,entry){entries.push({name,entry});}});
@@ -43,7 +43,7 @@ for (const outcome of ['allow','deny','defer']) {
       assert.equal(prompted,outcome==='defer');
       assert.equal(entries[0].entry.allowed,outcome!=='deny');
     } finally {
-      globalThis[symbol]=original;
+      dispose?.();
       rmSync(cwd,{recursive:true,force:true});
       rmSync(outside,{recursive:true,force:true});
     }

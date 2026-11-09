@@ -659,17 +659,7 @@ export function createPiAutoReviewExtension(
       context = ctx;
       broker = createBroker();
       policyAudit.warmup();
-      try {
-        disposeBrokerService = publishBoundaryBroker(broker);
-      } catch (error) {
-        if (!(error instanceof Error) ||
-            error.message !== "pi-auto-review boundary broker is already published") {
-          throw error;
-        }
-        // In-process child nodes still need their own reviewer/authorizer.
-        // The process-global broker capability remains owned by the parent.
-        disposeBrokerService = undefined;
-      }
+      disposeBrokerService = publishBoundaryBroker(broker, () => ctx.sessionManager.getSessionId());
     } catch (error) {
       context = undefined;
       broker = undefined;
