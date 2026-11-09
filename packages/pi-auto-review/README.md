@@ -195,7 +195,7 @@ Package defaults:
   "maxUserTranscriptTokens": 1200,
   "maxToolTranscriptTokens": 1200,
   "maxRelevantResultTokens": 800,
-  "maxReviewerInputTokens": 8192,
+  "maxReviewerInputTokens": 32768,
   "breakGlassEnabled": true,
   "failureMode": "deny",
   "grantTtlMs": 60000,
@@ -394,8 +394,10 @@ requests. It decides from the supplied context. Missing consequential evidence,
 invalid replies and provider failures do not grant permission. The conversation
 path makes one model request per review, without format retries.
 
-Original user messages are retained whole within an 8 KiB text budget, with up
-to 2 KiB of nearby assistant replies for context. Pi's compaction summaries do
+Original user messages, including expanded skills, are retained whole within
+the configured reviewer input budget (32,768 estimated tokens by default), with
+up to 2 KiB of nearby assistant replies for context. The full request, policy
+and evidence must fit that budget before a model is called. Pi's compaction summaries do
 not replace the original user instructions. Omissions are reported; a bounded
 window cannot guarantee enforcement of an instruction that is absent.
 

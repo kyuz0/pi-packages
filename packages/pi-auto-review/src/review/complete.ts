@@ -76,7 +76,7 @@ export async function complete(
         reviewerContext?.userOverride?.originalRequestId,
     },
   );
-  const selectedTranscript = rawBranch ? withRetainedContext(legacyTranscript, rawBranch) : legacyTranscript;
+  const selectedTranscript = rawBranch ? withRetainedContext(legacyTranscript, rawBranch, config.maxReviewerInputTokens) : legacyTranscript;
   const transcript = applyReviewerInputBudget(
     request,
     selectedTranscript,
@@ -100,7 +100,7 @@ export async function complete(
   // reviewer-retry override. The older display-truncation fallback can still
   // be lifted by that override.
   const deferralReason = transcript.retainedContext?.omittedNewestUserMessage
-    ? "The newest user message cannot fit intact in the review context; a human must decide."
+    ? `The newest user message cannot be retained in full for review. Check for unsupported attachments or increase the trusted maxReviewerInputTokens setting (currently ${config.maxReviewerInputTokens}). No permission granted.`
     : commandExpansionLimitExceeded(request)
     ? "Nested command expansion exceeds the local scan budget; a human must decide."
     : reviewerRequestView(request).fullCommandTruncated && !reviewerContext?.userOverride

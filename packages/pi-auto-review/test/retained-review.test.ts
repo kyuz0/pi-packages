@@ -39,8 +39,28 @@ test("legacy mode does not require or read raw branch API",async()=>{
 });
 
 test("omitted latest user instruction defers before calling a model",async()=>{
- const entries=[u("1","Publish the documents"),u("2","x".repeat(9000)+"Do not publish.")];
+ const entries=[u("1","Publish the documents"),u("2","x".repeat(100000)+"Do not publish.")];
  const ctx={sessionManager:{getSessionId:()=>"s",getBranch:()=>entries,buildContextEntries:()=>entries}} as unknown as ExtensionContext;
  const result=await complete(ctx,{...DEFAULT_CONFIG,retainedContext:true},request,undefined,async()=>{throw Error("must not call model");});
  assert.equal(result.decision.outcome,"defer");assert.equal(result.attempts,0);assert.match(result.decision.rationale,/newest user message/);
 });
+
+for (const reviewerConversation of [false, true]) {
+ test(`expanded skill reaches the reviewer intact (conversation=${reviewerConversation})`, async () => {
+  const skill = '<skill name="fixture">\n' + 'Read the documentation and work only inside the supplied workspace.\n'.repeat(410) + '</skill>\nDo not publish or send credentials.';
+  assert.ok(Buffer.byteLength(skill) > 26658);
+  const entries = [u("earlier", "Use only the workshop application."), u("skill", skill)];
+  const ctx = {sessionManager:{getSessionId:()=>`skill-${reviewerConversation}`,getBranch:()=>entries,buildContextEntries:()=>entries},modelRegistry:{getApiKeyAndHeaders:async()=>({ok:true,apiKey:"fixture"})}} as unknown as ExtensionContext;
+  let wire: any;
+  const streamSimple = ((_model:unknown, context:unknown)=>({result:async()=>{
+   wire=structuredClone(context);
+   return {role:"assistant",api:model.api,provider:model.provider,model:model.id,timestamp:Date.now(),stopReason:"stop",content:[{type:"text",text:JSON.stringify({...decision,outcome:"deny"})}]};
+  }})) as unknown as NonNullable<ReviewerMeta["streamSimple"]>;
+  const result=await complete(ctx,{...PRODUCTION_DEFAULT_CONFIG,reviewerConversation},request,undefined,async()=>({model,streamSimple}));
+  assert.equal(result.attempts,1);
+  assert.equal(result.decision.outcome,"deny");
+  const evidence=JSON.parse(wire.messages.at(-1).content).evidence;
+  const retained=evidence.parentOriginalMessages ?? evidence.retainedContext;
+  assert.deepEqual(retained.messages.filter((m:any)=>m.role==="user").map((m:any)=>m.content),entries.map(e=>e.message.content));
+ });
+}

@@ -26,7 +26,7 @@ export const DEFAULT_CONFIG: Config = {
   maxUserTranscriptTokens: 1_200,
   maxToolTranscriptTokens: 1_200,
   maxRelevantResultTokens: 800,
-  maxReviewerInputTokens: 8_192,
+  maxReviewerInputTokens: 32_768,
   breakGlassEnabled: true,
   failureMode: "deny",
   grantTtlMs: 60_000,

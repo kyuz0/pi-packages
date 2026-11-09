@@ -763,6 +763,7 @@ for (const [outcome, result, resolution, expected] of [
     h.controller.complete("r", g, h.ctx as never, buildUserReviewNotice(input), buildUserReviewWidgetData(input));
     h.controller.clear();
     assert.equal(h.notifications.length, 1);
+    assert.ok(h.notifications[0]);
     assert.match(h.notifications[0].message, expected);
     assert.match(h.notifications[0].message, /120 toks out/);
     assert.match(h.notifications[0].message, /reviewer/);
@@ -776,6 +777,7 @@ test("RPC final decision before review completion cannot be overwritten", () => 
   const input = { outcome: "allow" as const, surface: "fetch_content" };
   h.controller.complete("r", g, h.ctx as never, buildUserReviewNotice(input), buildUserReviewWidgetData(input));
   assert.equal(h.notifications.length, 1);
+  assert.ok(h.notifications[0]);
   assert.match(h.notifications[0].message, /permission check or escalation failed/);
 });
 
@@ -787,6 +789,7 @@ test("RPC session clear reports an unfinished decision without claiming approval
   h.controller.clear();
   h.controller.permissionDecision({ requestId: "r", result: "allow" });
   assert.equal(h.notifications.length, 1);
+  assert.ok(h.notifications[0]);
   assert.match(h.notifications[0].message, /before the permission check returned a final decision/);
   assert.doesNotMatch(h.notifications[0].message, /allowed/);
 });

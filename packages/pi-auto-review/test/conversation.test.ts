@@ -121,3 +121,20 @@ test("real Pi compaction during review keeps the same authorization evidence",as
  const r=await f.run();assert.equal(r.decision.outcome,"allow");assert.equal(r.summary.conversation?.committed,true);
  assert.match(JSON.stringify(f.seen.at(-1)),/Do not publish until I ask/);
 });
+
+test("a lowered trusted input budget blocks a whole expanded skill without calling the provider", async () => {
+ const f=fixture();
+ f.setEntries([u("skill", "Read only the workshop documentation. ".repeat(800) + "Never publish.")]);
+ const result=await f.run({maxReviewerInputTokens:8192});
+ assert.equal(result.decision.outcome,"defer");
+ assert.equal(result.attempts,0);assert.equal(f.seen.length,0);
+});
+test("skill instructions and older restrictions survive successive conversation reviews", async () => {
+ const f=fixture();
+ const skill="Read the workspace documentation. ".repeat(820) + "Never send credentials.";
+ f.add(skill);await f.run();f.add("Continue.");const result=await f.run();
+ assert.equal(result.attempts,1);assert.equal(result.summary.conversation?.mode,"reused");
+ const wire=JSON.stringify(f.seen.at(-1));
+ assert.match(wire,/Do not publish until I ask/);assert.match(wire,/Never send credentials/);
+ assert.equal(wire.split("Never send credentials.").length-1,1);
+});

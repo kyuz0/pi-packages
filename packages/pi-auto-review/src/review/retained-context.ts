@@ -25,7 +25,7 @@ function visibleText(content: unknown): { text: string; omitted: boolean } {
   return { text: text.join("\n"), omitted };
 }
 /** Only original messages on the active branch. Never promote a summary or custom message. */
-export function retainContext(entries: readonly unknown[], userBytes = 8192, assistantBytes = 2048): RetainedContext {
+export function retainContext(entries: readonly unknown[], userBytes = 98_304, assistantBytes = 2048): RetainedContext {
   const candidates: Array<RetainedMessage & { incomplete: boolean }> = [];
   for (const [order, value] of entries.entries()) {
     const entry = object(value);
@@ -82,8 +82,10 @@ export function retainedSnapshot(sessionId: string, entries: readonly unknown[])
   });
   return createHash("sha256").update(sessionId).update(JSON.stringify(evidence)).digest("hex");
 }
-export function withRetainedContext(transcript: TranscriptResult, entries: readonly unknown[]): TranscriptResult {
-  const retainedContext = retainContext(entries);
+export function withRetainedContext(transcript: TranscriptResult, entries: readonly unknown[], maxReviewerInputTokens = 32_768): TranscriptResult {
+  // This is only a selection bound. The full serialized request and policy
+  // must still pass applyReviewerInputBudget before any provider call.
+  const retainedContext = retainContext(entries, maxReviewerInputTokens * 3);
   return { ...transcript, retainedContext,
     reviewerEvidence: { ...transcript.reviewerEvidence, userMessages: [] },
     selectedCandidates: transcript.selectedCandidates.filter(c => c.kind !== "user"),

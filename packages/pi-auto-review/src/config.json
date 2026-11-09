@@ -7,7 +7,7 @@
   "maxUserTranscriptTokens": 1200,
   "maxToolTranscriptTokens": 1200,
   "maxRelevantResultTokens": 800,
-  "maxReviewerInputTokens": 8192,
+  "maxReviewerInputTokens": 32768,
   "breakGlassEnabled": true,
   "failureMode": "deny",
   "grantTtlMs": 60000,

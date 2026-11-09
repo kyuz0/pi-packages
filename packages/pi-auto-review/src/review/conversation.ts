@@ -4,7 +4,7 @@ import type { BoundaryRequest } from "../broker/index.ts";
 import { parseDecision, type TranscriptResult } from "../policy.ts";
 import { preflightPart, textFromAssistant } from "./input.ts";
 import { reviewerConversations, digest, providerIdentity } from "./conversation-store.ts";
-import { retainContext, retainedSnapshot } from "./retained-context.ts";
+import { retainedSnapshot } from "./retained-context.ts";
 import { REVIEWER_SYSTEM_PROMPT } from "./prompts.ts";
 import { modelCall, observedUsage, resolveApiKeyAndHeaders, reviewerSessionId, abortableOperation, classifyProviderFailure, normalizedStopReason, type ReviewerResolver } from "./provider.ts";
 import type { Config, ReviewPreflight, ReviewResult, ReviewExecutionSummary, ReviewerTelemetryEvent } from "./types.ts";
@@ -41,7 +41,10 @@ export async function completeConversation(o: Options): Promise<ReviewResult> {
     summary.conversation = { mode: lease.mode, rounds: 0, investigations: 0, committed: false, historyMessages: lease.messages.length };
     let messages: Message[] = lease.messages;
     let admitted = lease.admitted;
-    const retained = retainContext(entries);
+    // Reuse the evidence that passed input preflight; do not reselect it with
+    // a separate, smaller byte limit or restore discarded assistant replies.
+    const retained = transcript.retainedContext;
+    if (!retained) return finish("defer", "Original user instructions are unavailable for review.");
     const evidenceKeys = retained.messages.map(m => digest([m.id, m.role, m.content]));
     const fresh = retained.messages.filter((_m, i) => !admitted.has(evidenceKeys[i]!));
     const action = JSON.parse(o.sharedContext);

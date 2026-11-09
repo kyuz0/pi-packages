@@ -1260,7 +1260,7 @@ test("real permission-system authorizer chain integration", async (t) => {
         });
         const preflight = completion.preflight as Record<string, unknown>;
         assert.equal(preflight.estimator, "conservative:cjk-aware");
-        assert.equal(preflight.maxReviewerInputTokens, 8_192);
+        assert.equal(preflight.maxReviewerInputTokens, 32_768);
         assert.equal(preflight.framingReserveTokens, 64);
         assert.ok(
           (preflight.total as { characters: number }).characters > 0,
