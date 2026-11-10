@@ -311,6 +311,8 @@ When present, project configuration is merged with global configuration:
 - Scalar settings (`provider`, `mode`, `retryOnUnixSocketError`) allow project-level overrides.
 - `network.strictAllowlist` uses logical OR: `true` in either file enables it.
   Both configuration files are trusted; project allowlist additions remain effective.
+- `filesystem.protectCommonCredentialFiles` also uses logical OR. A project may
+  enable the protection but cannot disable a protection required globally.
 - The merged configuration must not enable both strict allowlist and Host-IPC `ask`.
 
 **Read-only Security Guarantee**:
@@ -362,3 +364,12 @@ Trusted configuration can set `filesystem.additionalWriteRoots` to absolute path
 Each root receives the same configuration and secret-file protections as the
 working directory. Project configuration cannot add write roots. In a managed
 container, configure these in `/opt/pi-security/config/sandbox.json`.
+
+### Common credential files
+
+`filesystem.protectCommonCredentialFiles` defaults to `true`. The default
+policy then blocks writes to common workspace credential files and directories,
+including `.env` variants, key material and `secrets` directories. Set it to
+`false` only when the agent should be able to read and write those files like
+other workspace files. Sandbox configuration, extension files, network policy
+and paths outside the configured write roots remain protected.

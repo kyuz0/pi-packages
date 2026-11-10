@@ -134,6 +134,7 @@ function sandboxOperations(
   turnIndex: () => number,
   additionalAllowRead: readonly string[],
   additionalWriteRoots: readonly string[],
+  protectCommonCredentialFiles: boolean,
   network: NetworkConfig,
   hostIPC: HostIPCConfig,
   sandbox?: PiSandboxExtensionOptions["sandbox"],
@@ -186,7 +187,7 @@ function sandboxOperations(
             onData: options.onData,
             onStderr,
             shellPath,
-            policy: createDefaultPolicy(cwd, { additionalAllowRead, additionalWriteRoots, network }),
+            policy: createDefaultPolicy(cwd, { additionalAllowRead, additionalWriteRoots, protectCommonCredentialFiles, network }),
             review: async (trap) => {
               const result = await approveSandboxTrap(trap, approvalContext);
               if (result.action === "deny" && result.reason) {
@@ -245,6 +246,7 @@ async function performRegistration(
     : undefined;
   const additionalAllowRead = config.filesystem.additionalAllowRead;
   const additionalWriteRoots = config.filesystem.additionalWriteRoots;
+  const protectCommonCredentialFiles = config.filesystem.protectCommonCredentialFiles;
   const network = config.network;
   const subagents =
     subagentProvider === "builtin"
@@ -270,6 +272,7 @@ async function performRegistration(
           () => currentTurn,
           additionalAllowRead,
           additionalWriteRoots,
+          protectCommonCredentialFiles,
           network,
           hostIPC,
           options.sandbox,
@@ -359,7 +362,7 @@ async function performRegistration(
           cwd: ctx.cwd,
           model: params.model,
           tools: pi.getActiveTools().filter((name) => name !== "subagent"),
-          policy: createDefaultPolicy(ctx.cwd, { additionalAllowRead, additionalWriteRoots, network }),
+          policy: createDefaultPolicy(ctx.cwd, { additionalAllowRead, additionalWriteRoots, protectCommonCredentialFiles, network }),
           sandbox: options.sandbox,
           review: async (trap: Parameters<typeof approveSandboxTrap>[0]) =>
             (await approveSandboxTrap(trap, approvalContext)).action,
@@ -526,6 +529,7 @@ async function performRegistration(
       () => currentTurn,
       additionalAllowRead,
       additionalWriteRoots,
+      protectCommonCredentialFiles,
       network,
       hostIPC,
       options.sandbox,

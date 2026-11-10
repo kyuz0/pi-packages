@@ -36,6 +36,7 @@ export type PiSandboxConfig = {
   filesystem: {
     additionalAllowRead: readonly string[];
     additionalWriteRoots: readonly string[];
+    protectCommonCredentialFiles: boolean;
   };
   network: NetworkConfig & { readonly strictAllowlist: boolean };
   hostIPC: HostIPCConfig;
@@ -57,6 +58,7 @@ export const DEFAULT_PI_SANDBOX_CONFIG: Readonly<PiSandboxConfig> = Object.freez
     filesystem: Object.freeze({
       additionalAllowRead: Object.freeze([]),
       additionalWriteRoots: Object.freeze([]),
+      protectCommonCredentialFiles: true,
     }),
     network: Object.freeze({
       allowedDomains: Object.freeze([]),
@@ -145,6 +147,7 @@ export type PartialPiSandboxConfig = {
   filesystem?: {
     additionalAllowRead?: readonly string[];
     additionalWriteRoots?: readonly string[];
+    protectCommonCredentialFiles?: boolean;
   };
   network?: Partial<NetworkConfig>;
   hostIPC?: Partial<HostIPCConfig>;
@@ -235,7 +238,7 @@ export function parsePiSandboxConfigRaw(value: unknown): PartialPiSandboxConfig 
     }
     rejectUnknownKeys(
       value.filesystem,
-      ["additionalAllowRead", "additionalWriteRoots"],
+      ["additionalAllowRead", "additionalWriteRoots", "protectCommonCredentialFiles"],
       "filesystem",
     );
     const additionalAllowRead = value.filesystem.additionalAllowRead;
@@ -265,6 +268,13 @@ export function parsePiSandboxConfigRaw(value: unknown): PartialPiSandboxConfig 
         throw new Error("invalid pi-sandbox configuration: filesystem.additionalWriteRoots must be an array of absolute paths");
       }
       parsedFilesystem.additionalWriteRoots = [...new Set(roots)];
+    }
+    const protectCommonCredentialFiles = value.filesystem.protectCommonCredentialFiles;
+    if (protectCommonCredentialFiles !== undefined) {
+      if (typeof protectCommonCredentialFiles !== "boolean") {
+        throw new Error("invalid pi-sandbox configuration: filesystem.protectCommonCredentialFiles must be a boolean");
+      }
+      parsedFilesystem.protectCommonCredentialFiles = protectCommonCredentialFiles;
     }
   }
 
@@ -433,6 +443,9 @@ function resolvePiSandboxConfig(raw: PartialPiSandboxConfig): PiSandboxConfig {
     },
     filesystem: {
       additionalWriteRoots: [...(raw.filesystem?.additionalWriteRoots ?? [])],
+      protectCommonCredentialFiles:
+        raw.filesystem?.protectCommonCredentialFiles ??
+        DEFAULT_PI_SANDBOX_CONFIG.filesystem.protectCommonCredentialFiles,
       additionalAllowRead: [
         ...(raw.filesystem?.additionalAllowRead ??
           DEFAULT_PI_SANDBOX_CONFIG.filesystem.additionalAllowRead),
@@ -469,6 +482,8 @@ function defaultPiSandboxConfig(): PiSandboxConfig {
     },
     filesystem: {
       additionalWriteRoots: [],
+      protectCommonCredentialFiles:
+        DEFAULT_PI_SANDBOX_CONFIG.filesystem.protectCommonCredentialFiles,
       additionalAllowRead: [
         ...DEFAULT_PI_SANDBOX_CONFIG.filesystem.additionalAllowRead,
       ],
@@ -562,6 +577,9 @@ export function mergePiSandboxConfigs(
     filesystem: {
       // Projects cannot widen the trusted write boundary.
       additionalWriteRoots: [...trusted.filesystem.additionalWriteRoots],
+      protectCommonCredentialFiles:
+        trusted.filesystem.protectCommonCredentialFiles ||
+        (project.filesystem?.protectCommonCredentialFiles ?? false),
       additionalAllowRead: [
         ...new Set([
           ...trusted.filesystem.additionalAllowRead,

@@ -29,6 +29,11 @@ const defaultNetwork = {
   deniedDomains: [] as string[],
   strictAllowlist: false,
 };
+const defaultFilesystem = {
+  additionalWriteRoots: [] as string[],
+  additionalAllowRead: [] as string[],
+  protectCommonCredentialFiles: true,
+};
 
 function makeTempRoot(prefix: string): string {
   const parent = join(packageRoot, ".tmp");
@@ -56,13 +61,13 @@ test("defaults to the builtin provider when configuration is absent", () => {
   try {
     assert.deepEqual(loadPiSandboxConfig({ path: join(root, "missing.json") }), {
       subagents: { provider: "builtin" },
-      filesystem: { additionalWriteRoots: [], additionalAllowRead: [] },
+      filesystem: defaultFilesystem,
       network: defaultNetwork,
       hostIPC: defaultHostIPC,
     });
     assert.deepEqual(loadPiSandboxConfig({ home: root, cwd: root }), {
       subagents: { provider: "builtin" },
-      filesystem: { additionalWriteRoots: [], additionalAllowRead: [] },
+      filesystem: defaultFilesystem,
       network: defaultNetwork,
       hostIPC: defaultHostIPC,
     });
@@ -93,7 +98,7 @@ test("loads the extension-local config and supports project-level config merge",
     );
     assert.deepEqual(loadPiSandboxConfig({ home: root, cwd: workspace }), {
       subagents: { provider: "off" },
-      filesystem: { additionalWriteRoots: [], additionalAllowRead: ["/opt/global-bin"] },
+      filesystem: { ...defaultFilesystem, additionalAllowRead: ["/opt/global-bin"] },
       network: {
         allowedDomains: ["github.com"],
         deniedDomains: ["uploads.github.com"],
@@ -126,6 +131,7 @@ test("loads the extension-local config and supports project-level config merge",
     assert.deepEqual(merged, {
       subagents: { provider: "off" },
       filesystem: {
+        protectCommonCredentialFiles: true,
         additionalWriteRoots: [],
         additionalAllowRead: ["/opt/global-bin", "/home/erich/.pi"],
       },
@@ -152,7 +158,7 @@ test("accepts builtin and off without external protection settings", () => {
       parsePiSandboxConfig({ subagents: { provider } }),
       {
         subagents: { provider },
-        filesystem: { additionalWriteRoots: [], additionalAllowRead: [] },
+        filesystem: defaultFilesystem,
         network: defaultNetwork,
         hostIPC: defaultHostIPC,
       },
@@ -192,19 +198,19 @@ test("pi-subagents requires native background protection and a canonical whiteli
 test("defaults omitted sections to their secure defaults", () => {
   assert.deepEqual(parsePiSandboxConfig({}), {
     subagents: { provider: "builtin" },
-    filesystem: { additionalWriteRoots: [], additionalAllowRead: [] },
+    filesystem: defaultFilesystem,
     network: defaultNetwork,
     hostIPC: defaultHostIPC,
   });
   assert.deepEqual(parsePiSandboxConfig({ subagents: {} }), {
     subagents: { provider: "builtin" },
-    filesystem: { additionalWriteRoots: [], additionalAllowRead: [] },
+    filesystem: defaultFilesystem,
     network: defaultNetwork,
     hostIPC: defaultHostIPC,
   });
   assert.deepEqual(parsePiSandboxConfig({ filesystem: {} }), {
     subagents: { provider: "builtin" },
-    filesystem: { additionalWriteRoots: [], additionalAllowRead: [] },
+    filesystem: defaultFilesystem,
     network: defaultNetwork,
     hostIPC: defaultHostIPC,
   });
@@ -218,6 +224,7 @@ test("accepts unique absolute additional read paths", () => {
   assert.deepEqual(
     parsePiSandboxConfig({
       filesystem: {
+        protectCommonCredentialFiles: true,
         additionalWriteRoots: [],
         additionalAllowRead: [
           "/home/user/.local/bin/rtk",
@@ -229,6 +236,7 @@ test("accepts unique absolute additional read paths", () => {
     {
       subagents: { provider: "builtin" },
       filesystem: {
+        protectCommonCredentialFiles: true,
         additionalWriteRoots: [],
         additionalAllowRead: [
           "/home/user/.local/bin/rtk",
@@ -256,7 +264,7 @@ test("accepts and normalizes the host-IPC configuration", () => {
     }),
     {
       subagents: { provider: "builtin" },
-      filesystem: { additionalWriteRoots: [], additionalAllowRead: [] },
+      filesystem: defaultFilesystem,
       network: defaultNetwork,
       hostIPC: {
         mode: "ask",
@@ -437,6 +445,10 @@ test("rejects unsafe additional read path shapes", () => {
     /filesystem must be an object/,
   );
   assert.throws(
+    () => parsePiSandboxConfig({ filesystem: { protectCommonCredentialFiles: "no" } }),
+    /filesystem\.protectCommonCredentialFiles must be a boolean/,
+  );
+  assert.throws(
     () => parsePiSandboxConfig({ subagents: null }),
     /subagents must be an object/,
   );
@@ -510,4 +522,34 @@ test("project configuration cannot add trusted write roots", () => {
   const merged = mergePiSandboxConfigs(trusted, {filesystem: {additionalWriteRoots: ["/home"]}});
   assert.deepEqual(merged.filesystem.additionalWriteRoots, ["/workspace", "/mnt/data"]);
   assert.throws(() => parsePiSandboxConfig({filesystem: {additionalWriteRoots: ["relative"]}}));
+});
+
+test("credential-file protection defaults on and can only be tightened by project configuration", () => {
+  assert.equal(
+    parsePiSandboxConfig({ filesystem: { protectCommonCredentialFiles: false } })
+      .filesystem.protectCommonCredentialFiles,
+    false,
+  );
+
+  const unprotected = parsePiSandboxConfig({
+    filesystem: { protectCommonCredentialFiles: false },
+  });
+  assert.equal(
+    mergePiSandboxConfigs(unprotected, {}).filesystem.protectCommonCredentialFiles,
+    false,
+  );
+  assert.equal(
+    mergePiSandboxConfigs(unprotected, {
+      filesystem: { protectCommonCredentialFiles: true },
+    }).filesystem.protectCommonCredentialFiles,
+    true,
+  );
+
+  const protectedConfig = parsePiSandboxConfig({});
+  assert.equal(
+    mergePiSandboxConfigs(protectedConfig, {
+      filesystem: { protectCommonCredentialFiles: false },
+    }).filesystem.protectCommonCredentialFiles,
+    true,
+  );
 });

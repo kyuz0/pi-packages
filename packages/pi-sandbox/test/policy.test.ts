@@ -194,3 +194,19 @@ test("trusted write roots retain each root's configuration and secret protection
   }
   assert(policy.filesystem.denyWrite.includes(join(homedir(), ".pi/agent/extensions")));
 });
+
+test("credential-file protection can be disabled without unprotecting sandbox configuration", () => {
+  const roots = ["/workspace/app", "/workspace", "/mnt/data"];
+  const policy = createDefaultPolicy("/workspace/app", {
+    additionalWriteRoots: ["/workspace", "/mnt/data"],
+    protectCommonCredentialFiles: false,
+  });
+
+  for (const root of roots) {
+    assert(!policy.filesystem.denyWrite.includes(join(root, ".env")));
+    assert(!policy.filesystem.denyWrite.includes(join(root, "credentials.json")));
+    assert(policy.filesystem.denyWrite.includes(join(root, ".pi/pi-auto-review.json")));
+    assert(policy.filesystem.denyWrite.includes(join(root, ".pi/extensions/pi-sandbox/config.json")));
+  }
+  assert(policy.filesystem.denyWrite.includes(join(homedir(), ".pi/agent/extensions")));
+});

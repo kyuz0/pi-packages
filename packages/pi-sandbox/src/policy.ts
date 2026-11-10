@@ -126,6 +126,7 @@ export type SandboxPolicy = {
 export type CreateDefaultPolicyOptions = {
   additionalAllowRead?: readonly string[];
   additionalWriteRoots?: readonly string[];
+  protectCommonCredentialFiles?: boolean;
   network?: NetworkConfig;
 };
 
@@ -257,7 +258,9 @@ export function createDefaultPolicy(
         ...writeRoots.flatMap(root => [
           join(root, ".pi", "pi-auto-review.json"),
           join(root, PROJECT_PI_SANDBOX_CONFIG_PATH),
-          ...createWorkspaceSecretDenyWritePaths(root),
+          ...(options.protectCommonCredentialFiles === false
+            ? []
+            : createWorkspaceSecretDenyWritePaths(root)),
         ]),
         join(home, ".pi", "agent", "logs"),
         // Prevent the sandbox from installing or rewriting trusted extensions
