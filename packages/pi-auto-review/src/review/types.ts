@@ -131,7 +131,7 @@ export type ReviewPreflight = {
 export type ReviewExecutionSummary = {
   /** Controller failure, distinct from a valid model decision to defer. */
   controllerFailure?: string;
-  conversation?: { mode: "independent" | "fresh" | "reused" | "fork" | "reset"; rounds: number; investigations: number; committed: boolean; historyMessages: number };
+  conversation?: { mode: "independent" | "fresh" | "reused" | "fork" | "reset"; rounds: number; investigations: number; committed: boolean; historyMessages: number; resetReason?: "capacity" | "provider-rejection" | "invalid-history" };
   attempts: ReviewAttemptObservation[];
   errorCounts: Partial<Record<Exclude<ReviewErrorClass, "none">, number>>;
   durationMs: number;

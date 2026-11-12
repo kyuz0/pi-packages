@@ -2,10 +2,11 @@ import { withQuestionAnswers } from "./question-answers.ts";
 import { createHash } from "node:crypto";
 import type { TranscriptResult } from "../policy.ts";
 
-export type RetainedMessage = { id: string; order: number; role: "user" | "assistant"; content: string; source?: "trusted-question-tool"; uninspectedAttachments?: Array<{ type: "image"; mimeType: string }> };
+export type RetainedMessage = { id: string; order: number; role: "user" | "assistant"; content: string; source?: "trusted-question-tool"; possiblySuperseded?: true; uninspectedAttachments?: Array<{ type: "image"; mimeType: string }> };
 export type RetainedContext = {
   messages: RetainedMessage[];
   omittedUserMessages: number;
+  newestOmittedUserOrder?: number;
   omittedNewestUserMessage: boolean;
   newestUserOmissionReason?: "unsupported-content" | "input-budget";
   omittedAssistantMessages: number;
@@ -51,13 +52,18 @@ export function retainContext(entries: readonly unknown[], userBytes = 98_304, a
   }
   const selected: RetainedMessage[] = [];
   let omittedUserMessages = 0, omittedAssistantMessages = 0;
+  let newestOmittedUserOrder: number | undefined;
   for (const message of candidates.filter(m => m.role === "user").reverse()) {
     const bytes = Buffer.byteLength(message.content, "utf8") + (message.uninspectedAttachments ? Buffer.byteLength(JSON.stringify(message.uninspectedAttachments), "utf8") : 0);
     if (message.incomplete || (!message.content && !message.uninspectedAttachments?.length) || bytes > userBytes) {
+      newestOmittedUserOrder ??= message.order;
       omittedUserMessages++; continue;
     }
     const { incomplete: _, ...whole } = message;
     selected.push(whole); userBytes -= bytes;
+  }
+  if (newestOmittedUserOrder !== undefined) {
+    for (const message of selected) if (message.role === "user" && message.order < newestOmittedUserOrder) message.possiblySuperseded = true;
   }
   // Keep visible assistant replies nearest retained user messages, so "yes" has
   // a referent. They remain non-authoritative and cannot displace user messages.
@@ -75,6 +81,7 @@ export function retainContext(entries: readonly unknown[], userBytes = 98_304, a
   const newestUser = candidates.filter(m => m.role === "user").at(-1);
   const omittedNewestUserMessage = Boolean(newestUser && !selected.some(m => m.id === newestUser.id));
   return { messages: selected.sort((a,b) => a.order-b.order), omittedUserMessages, omittedNewestUserMessage, omittedAssistantMessages,
+    ...(newestOmittedUserOrder === undefined ? {} : { newestOmittedUserOrder }),
     ...(omittedNewestUserMessage ? { newestUserOmissionReason: newestUser?.incomplete ? "unsupported-content" as const : "input-budget" as const } : {}),
     source: "active-session-branch", provenance: "session-role-not-independent-human-attestation" };
 }

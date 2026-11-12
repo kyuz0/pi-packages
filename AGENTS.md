@@ -20,6 +20,10 @@ The consumer launcher owns its tool allowlist. Question tools can be allowed the
 
 ## Tests and updates
 
+Tested production changes must land on `main` here before Factory is published
+with their pin. Temporary branches are permitted, but production dependencies
+must never remain available only from a branch.
+
 Use Node >=22.19 and npm 11. Install with `npm ci`; run `npm run check` and `npm test`. For a focused change: `npm run test --workspace=@erichll/pi-auto-review` (other package names are in their package.json). Tests live beside each package. Linux OS sandbox tests need bubblewrap, socat and ripgrep; report platform skips accurately. Fixtures are not live model tests.
 
 Do not use real credentials, transcripts or user containers in tests. Keep source and tests here, rather than patching copies in consumers. Local AI Sandboxes consumes a published commit and SHA-256-verified archive through its `containers/dev/security/sources.json`; update that pin and run its integration checks after publishing a runtime change. The standalone launcher is https://github.com/kyuz0/local-ai-sandboxes.

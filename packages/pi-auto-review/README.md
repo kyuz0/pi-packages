@@ -229,16 +229,17 @@ extend retention.
 not an expected response time. It covers model resolution, authentication and
 the model response. Provider-internal retries are disabled.
 
-The default conversation mode makes one model call per approval. Each action
+The default conversation mode makes at most two model calls per approval. Each action
 includes the selected original user instructions and answers; approval within
 their scope does not need to be repeated in a new chat message. Invalid
 output, unexpected tool calls, cancellation and provider failures never grant
 permission and do not commit a turn to reviewer history.
 
-The optional independent mode (`reviewerConversation: false`) can retry once
-for malformed output or recognized transient connection, 5xx and 429 errors,
-within the same deadline. Valid decisions, output exhaustion, timeouts and
-authentication errors are never retried. `retries` applies only to this mode.
+Both conversation and independent modes can retry once for malformed output
+or recognized transient connection, 5xx and 429 errors within the same deadline.
+Valid decisions, output exhaustion, timeouts and authentication errors are never
+retried. Set `retries: 0` to disable retries. A provider context rejection with
+reused history can retry from the same current evidence without older reviews.
 
 ## Operator feedback and exact retry
 
@@ -396,7 +397,7 @@ are not user permission.
 The reviewer has **no tools**: it cannot read files, run commands or make network
 requests. It decides from the supplied context. Missing consequential evidence,
 invalid replies and provider failures do not grant permission. The conversation
-path makes one model request per review, without format retries.
+path uses the same bounded retry policy as independent review.
 
 Original user messages, including expanded skills, are retained whole within
 the configured reviewer input budget (32,768 estimated tokens by default), with
@@ -409,6 +410,12 @@ The full request, policy
 and evidence must fit that budget before a model is called. Pi's compaction summaries do
 not replace the original user instructions. Omissions are reported; a bounded
 window cannot guarantee enforcement of an instruction that is absent.
+
+When older reviews fill the input budget, they are discarded and the next
+review starts from the same selected original instructions and explicit omission
+markers. Failed reviews discard their cached history so a later request can
+recover. An older approval preceding an omitted instruction is marked as
+potentially superseded and cannot establish positive authorization.
 
 Each current action includes the selected original instructions and trusted
 question answers. Earlier actions keep their request and verdict without

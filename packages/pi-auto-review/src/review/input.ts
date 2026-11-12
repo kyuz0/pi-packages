@@ -26,7 +26,7 @@ import {
   PROJECT_CONFIG_PATH,
   REVIEWER_FRAMING_RESERVE_TOKENS,
 } from "./consts.ts";
-import { REVIEWER_SYSTEM_PROMPT } from "./prompts.ts";
+import { REVIEWER_SYSTEM_PROMPT, conversationPrompt } from "./prompts.ts";
 import {
   MAX_REVIEWER_COMMAND_BYTES,
   truncateUtf8,
@@ -293,14 +293,28 @@ export function combinedPreflightPart(values: readonly string[]): PreflightPart 
   );
 }
 
+/** Exact conversation envelope, shared by admission and the provider path. */
+export function conversationAction(sharedContext: string) {
+  const action = JSON.parse(sharedContext);
+  const retained = action.evidence.retainedContext;
+  delete action.evidence.retainedContext;
+  delete action.evidence.userMessages;
+  action.evidence.parentOriginalMessages = { source: retained.source, provenance: retained.provenance,
+    messages: retained.messages, omittedUserMessages: retained.omittedUserMessages,
+    omittedAssistantMessages: retained.omittedAssistantMessages, newestOmittedUserOrder: retained.newestOmittedUserOrder };
+  action.currentAction = true;
+  return action;
+}
+
 export function reviewPreflight(
   request: BoundaryRequest,
   transcript: TranscriptResult,
   reviewerContext: BoundaryReviewerContext | undefined,
   sharedContext: string,
   maxReviewerInputTokens: number,
+  conversation = false,
 ): ReviewPreflight {
-  const fixedPrompt = preflightPart(REVIEWER_SYSTEM_PROMPT);
+  const fixedPrompt = preflightPart(conversation ? conversationPrompt() : REVIEWER_SYSTEM_PROMPT);
   const canonicalRequest = preflightPart(
     canonicalReviewerJson(reviewerRequestView(request)),
   );
@@ -319,7 +333,10 @@ export function reviewPreflight(
   const relevantResult = combinedPreflightPart(
     transcript.reviewerEvidence.relevantResults.map((item) => item.content),
   );
-  const dynamic = preflightPart(sharedContext);
+  const action = conversation ? conversationAction(sharedContext) : undefined;
+  if (action) action.reviewerHistoryReset = true;
+  const conversationMessages = [{role: "user", content: JSON.stringify(action), timestamp: Date.now()}];
+  const dynamic = preflightPart(conversation ? JSON.stringify({ messages: conversationMessages }) : sharedContext);
   const dynamicEvidenceCharacters =
     canonicalRequest.characters +
     override.characters +
@@ -332,23 +349,29 @@ export function reviewPreflight(
     user.estimatedTokens +
     tool.estimatedTokens +
     relevantResult.estimatedTokens;
+  const framingReserve = conversation ? 256 : REVIEWER_FRAMING_RESERVE_TOKENS;
   const framing: PreflightPart = {
     characters: Math.max(0, dynamic.characters - dynamicEvidenceCharacters),
     estimatedTokens:
       Math.max(0, dynamic.estimatedTokens - dynamicEvidenceTokens) +
-      REVIEWER_FRAMING_RESERVE_TOKENS,
+      framingReserve,
   };
   const total: PreflightPart = {
     characters: fixedPrompt.characters + dynamic.characters,
     estimatedTokens:
       fixedPrompt.estimatedTokens +
       dynamic.estimatedTokens +
-      REVIEWER_FRAMING_RESERVE_TOKENS,
+      framingReserve,
   };
+  if (conversation) {
+    const wire = preflightPart(JSON.stringify({systemPrompt: conversationPrompt(), messages: conversationMessages}));
+    total.characters = wire.characters;
+    total.estimatedTokens = wire.estimatedTokens + framingReserve;
+  }
   return {
     estimator: "conservative:cjk-aware",
     maxReviewerInputTokens,
-    framingReserveTokens: REVIEWER_FRAMING_RESERVE_TOKENS,
+    framingReserveTokens: framingReserve,
     fixedPrompt,
     canonicalRequest,
     override,
@@ -425,6 +448,7 @@ export function applyReviewerInputBudget(
   source: TranscriptResult,
   reviewerContext: BoundaryReviewerContext | undefined,
   maxReviewerInputTokens: number,
+  conversation = false,
 ): TranscriptResult {
   const transcript = cloneTranscript(source);
   if (transcript.failureCode) return transcript;
@@ -436,6 +460,7 @@ export function applyReviewerInputBudget(
       reviewerContext,
       context,
       maxReviewerInputTokens,
+      conversation,
     ).total.estimatedTokens;
   };
   if (estimatedTokens() <= maxReviewerInputTokens) return transcript;
@@ -497,6 +522,22 @@ export function applyReviewerInputBudget(
     recordBudgetRemoval(transcript, "optional-result", 1);
     refreshBudgetedTranscript(transcript);
     if (estimatedTokens() <= maxReviewerInputTokens) return transcript;
+  }
+
+  if (transcript.retainedContext) {
+    const retained = transcript.retainedContext;
+    const users = retained.messages.filter(m => m.role === "user");
+    for (const oldest of users.slice(0, -1)) {
+      retained.messages = retained.messages.filter(m => m !== oldest);
+      retained.omittedUserMessages++;
+      retained.newestOmittedUserOrder = Math.max(retained.newestOmittedUserOrder ?? -1, oldest.order);
+      for (const message of retained.messages) {
+        if (message.role === "user" && message.order < retained.newestOmittedUserOrder) message.possiblySuperseded = true;
+      }
+      transcript.truncated = true;
+      transcript.userCharacters = retained.messages.filter(m => m.role === "user").reduce((n,m)=>n+m.content.length,0);
+      if (estimatedTokens() <= maxReviewerInputTokens) return transcript;
+    }
   }
 
   transcript.failureCode = "reviewer_input_budget_exceeded";

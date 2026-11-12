@@ -26,6 +26,9 @@ export class ConversationStore {
     let settled = false;
     return {
       mode,
+      invalidate: () => {
+        if (!fork && this.states.get(owner) === state) this.states.delete(owner);
+      },
       messages: structuredClone(state.messages),
       admitted: new Set(state.admitted),
       commit: (messages: Message[], admitted: Set<string>) => {

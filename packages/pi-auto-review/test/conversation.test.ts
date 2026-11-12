@@ -86,7 +86,7 @@ test("provider output exhaustion fails closed without committing partial history
 });
 test("a provider that never resolves is bounded by the shared deadline", async () => {
  const f=fixture();f.setNext(()=>new Promise(()=>{}));const started=Date.now();const r=await f.run({timeoutMs:1000});
- assert.equal(r.decision.outcome,"defer");assert.equal(r.summary.errorCounts.abort,1);assert.ok(Date.now()-started<5000);assert.equal(r.summary.conversation?.committed,false);
+ assert.equal(r.decision.outcome,"defer");assert.equal(r.summary.errorCounts.timeout,1);assert.ok(Date.now()-started<5000);assert.equal(r.summary.conversation?.committed,false);
 });
 test("an unavailable provider does not make the next review lose original restrictions", async () => {
  const f=fixture();await f.run();f.add("Publishing is now forbidden.");f.setNext(async()=>{throw Error("offline");});await f.run();

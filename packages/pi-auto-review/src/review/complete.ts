@@ -82,6 +82,7 @@ export async function complete(
     selectedTranscript,
     reviewerContext,
     config.maxReviewerInputTokens,
+    config.reviewerConversation,
   );
   const sharedContext = sharedReviewContext(
     request,
@@ -94,9 +95,10 @@ export async function complete(
     reviewerContext,
     sharedContext,
     config.maxReviewerInputTokens,
+    config.reviewerConversation,
   );
   // Hard denies already ran on the raw text plus bounded payloads. An
-  // incomplete expansion must reach the human terminal, even with a trusted
+  // incomplete expansion cannot be reviewed, even with a trusted
   // reviewer-retry override. The older display-truncation fallback can still
   // be lifted by that override.
   const deferralReason = transcript.retainedContext?.omittedNewestUserMessage
@@ -104,9 +106,9 @@ export async function complete(
       ? "The newest user message contains unsupported content. Its instructions could not be retained for review."
       : `The newest user message cannot be retained within the reviewer input budget (${config.maxReviewerInputTokens} estimated tokens). Shorten the message or reduce expanded context before retrying.`
     : commandExpansionLimitExceeded(request)
-    ? "Nested command expansion exceeds the local scan budget; a human must decide."
+    ? "Nested command expansion exceeds the local scan budget. Split the command into bounded operations before retrying."
     : reviewerRequestView(request).fullCommandTruncated && !reviewerContext?.userOverride
-      ? "The complete command exceeds the reviewer input bound and was truncated; a human must decide."
+      ? "The complete command exceeds the reviewer input bound. Split the command into bounded operations before retrying."
       : undefined;
   if (deferralReason) {
     const deferredSummary: ReviewExecutionSummary = {
