@@ -373,3 +373,16 @@ including `.env` variants, key material and `secrets` directories. Set it to
 `false` only when the agent should be able to read and write those files like
 other workspace files. Sandbox configuration, extension files, network policy
 and paths outside the configured write roots remain protected.
+
+## Container browser adapter
+
+The container browser adapter keeps an encrypted Betterwright credential vault
+at `~/.betterwright/vault`, separate from its temporary browser profiles. Browser
+sessions share the vault; closing a session removes its profile and retains saved
+credentials. The browser API lists account metadata and fills credentials only
+on matching sites. Human logins in the headless viewer are not saved automatically
+under Betterwright’s default settings.
+
+Run `test/browser-vault-check.mjs` inside a disposable Factory browser container
+to check shared storage, origin matching, file permissions, trusted filling and
+password redaction with synthetic credentials.

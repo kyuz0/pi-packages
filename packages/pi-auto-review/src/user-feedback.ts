@@ -183,14 +183,14 @@ function reviewHeadline(outcome: UserReviewOutcome, surface: string): string {
 function recoveryLine(
   outcome: UserReviewOutcome,
   recoveryCommand?: "/auto-review-approve" | "/auto-review-break-glass" | false,
+  denialSource?: UserReviewNoticeInput["denialSource"],
 ): string | undefined {
   if (outcome === "circuit_breaker") {
     return "use /auto-review-approve for one exact retry";
   }
   if (outcome !== "deny") return undefined;
-  if (recoveryCommand === false) {
-    return "local safety denials cannot be overridden";
-  }
+  if (denialSource === "hard-deny") return "local safety policy blocks this action; no override is available";
+  if (recoveryCommand === false) return "no manual override is available for this review";
   if (recoveryCommand) {
     return `use ${recoveryCommand} for one exact retry`;
   }
@@ -218,6 +218,7 @@ export type UserReviewNoticeInput = {
   surface: string;
   target?: string;
   rationale?: string;
+  denialSource?: "hard-deny" | "reviewer" | "circuit-breaker" | "unavailable";
   recoveryCommand?: "/auto-review-approve" | "/auto-review-break-glass" | false;
   model?: string;
   usage?: UserReviewUsage;
@@ -313,7 +314,7 @@ export function buildUserReviewLines(input: UserReviewNoticeInput): string[] {
   return joinNoticeLines([
     reviewHeadline(input.outcome, input.surface),
     reviewTargetRationaleLine(input),
-    recoveryLine(input.outcome, input.recoveryCommand),
+    recoveryLine(input.outcome, input.recoveryCommand, input.denialSource),
     formatReviewMeta({
       model: input.model,
       usage: input.usage,
@@ -445,8 +446,8 @@ function groupOutcome(members: readonly UserReviewGroupMember[]): UserReviewOutc
 
 function groupHeadline(data: UserReviewGroupEntryData): string {
   const outcome = groupOutcome(data.members);
-  const result = outcome === "deny" || outcome === "circuit_breaker" ||
-      outcome === "unavailable"
+  const result = outcome === "unavailable" ? "unavailable"
+    : outcome === "deny" || outcome === "circuit_breaker"
     ? "denied"
     : outcome === "defer" || outcome === "needs_confirmation"
       ? "deferred"
@@ -480,7 +481,7 @@ export function buildUserReviewGroupLines(
     lines.push(
       summary,
       ...joinNoticeLines([
-        recoveryLine(member.outcome, member.recoveryCommand),
+        recoveryLine(member.outcome, member.recoveryCommand, member.denialSource),
         member.permissionResult === "deny" && member.outcome !== "deny"
           ? "Local confirmation · denied"
           : undefined,

@@ -2,13 +2,14 @@
 import { spawn } from 'node:child_process';
 import { mkdir, rm, copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { randomBytes } from 'node:crypto';
 import { browserRoot, viewerLink } from './viewer.mjs';
-import { BetterWright } from 'betterwright';
+import { BetterWright, createLocalCredentialVault } from 'betterwright';
 
 export class SandboxBrowser {
-  vault = false;
+  vault = createLocalCredentialVault({ dir: join(homedir(), '.betterwright', 'vault') });
   downloadPolicy = 'ask';
   #id = randomBytes(16).toString('hex');
   #pending;
@@ -58,7 +59,7 @@ export class SandboxBrowser {
       // Continue draining Chromium diagnostics after its readiness message.
       this.#process.stderr.resume();
       this.#client = new BetterWright({ provider: { cdpUrl: endpoint },
-        home: this.#profile, headless: true, vault: false, downloadPolicy: this.downloadPolicy });
+        home: this.#profile, headless: true, vault: this.vault, downloadPolicy: this.downloadPolicy });
       return this.#client;
     } catch (error) {
       await this.#cleanup();
@@ -69,6 +70,11 @@ export class SandboxBrowser {
   async run(code, options) {
     this.#pending ??= this.#start().catch(error => { this.#pending = undefined; throw error; });
     return (await this.#pending).run(code, options);
+  }
+
+  async fillCredential(options) {
+    this.#pending ??= this.#start().catch(error => { this.#pending = undefined; throw error; });
+    return (await this.#pending).fillCredential(options);
   }
 
   async viewerLink() {
@@ -88,6 +94,7 @@ export class SandboxBrowser {
         child.kill('SIGTERM');
       });
     }
+    this.vault.dispose();
     if (this.#profile) await rm(this.#profile, { recursive: true, force: true });
     this.#profile = undefined;
   }

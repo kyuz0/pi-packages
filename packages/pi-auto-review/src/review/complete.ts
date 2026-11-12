@@ -100,7 +100,9 @@ export async function complete(
   // reviewer-retry override. The older display-truncation fallback can still
   // be lifted by that override.
   const deferralReason = transcript.retainedContext?.omittedNewestUserMessage
-    ? `The newest user message cannot be retained in full for review. Check for unsupported attachments or increase the trusted maxReviewerInputTokens setting (currently ${config.maxReviewerInputTokens}). No permission granted.`
+    ? transcript.retainedContext.newestUserOmissionReason === "unsupported-content"
+      ? "The newest user message contains unsupported content. Its instructions could not be retained for review."
+      : `The newest user message cannot be retained within the reviewer input budget (${config.maxReviewerInputTokens} estimated tokens). Shorten the message or reduce expanded context before retrying.`
     : commandExpansionLimitExceeded(request)
     ? "Nested command expansion exceeds the local scan budget; a human must decide."
     : reviewerRequestView(request).fullCommandTruncated && !reviewerContext?.userOverride

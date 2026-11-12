@@ -192,9 +192,16 @@ test("buildUserReviewNotice covers decisive user outcomes", () => {
     surface: "bash",
     target: "cat ~/.ssh/id_rsa",
     rationale: "credential file",
+    denialSource: "hard-deny",
     recoveryCommand: false,
   });
-  assert.match(localDeny.message, /cannot be overridden/);
+  assert.match(localDeny.message, /local safety policy blocks this action/);
+  const modelDeny = buildUserReviewNotice({outcome: "deny", surface: "browser", rationale: "Not authorized", denialSource: "reviewer", recoveryCommand: false});
+  assert.match(modelDeny.message, /no manual override is available/);
+  assert.doesNotMatch(modelDeny.message, /local safety/);
+  const failed = buildUserReviewNotice({outcome: "unavailable", surface: "browser", rationale: "Reviewer input is unavailable", denialSource: "unavailable", recoveryCommand: false});
+  assert.match(failed.message, /Auto-review · unavailable/);
+  assert.doesNotMatch(failed.message, /local safety|cannot be overridden/);
   assert.doesNotMatch(localDeny.message, /cliproxyapi|tok| in ·/);
 
   const breaker = buildUserReviewNotice({

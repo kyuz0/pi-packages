@@ -42,9 +42,26 @@ test("retains the assistant question needed to interpret yes, without reasoning"
  const c=retainContext([a("1",[{type:"thinking",thinking:"hidden"},{type:"text",text:"Delete only cache?"}]),u("2","yes")]);
  assert.equal(c.messages[0]?.content,"Delete only cache?"); assert.equal(c.messages[0]?.role,"assistant");
 });
-test("nontext user input is marked missing rather than silently trusted",()=>{
- const c=retainContext([u("1",[{type:"text",text:"Use this"},{type:"image",data:"anything"}])]);
+test("screenshots retain original restrictions without binary payloads",()=>{
+ const image=u("image",[{type:"text",text:"Inspect this; do not submit anything."},{type:"image",mimeType:"image/png",data:"PRIVATE_IMAGE_DATA"}]);
+ for(const entries of [[image],[image,u("next","Continue")]]) {
+  const c=retainContext(entries);
+  assert.equal(c.omittedNewestUserMessage,false); assert.equal(c.omittedUserMessages,0);
+  assert.equal(c.messages[0]!.content,"Inspect this; do not submit anything.");
+  assert.deepEqual(c.messages[0]!.uninspectedAttachments,[{type:"image",mimeType:"image/png"}]);
+  assert.doesNotMatch(JSON.stringify(c),/PRIVATE_IMAGE_DATA/);
+ }
+ assert.notEqual(retainedSnapshot("s",[image]),retainedSnapshot("s",[u("image",[{type:"text",text:"Inspect this; do not submit anything."},{type:"image",mimeType:"image/png",data:"EDITED_IMAGE"}])]));
+});
+test("image-only messages remain explicit without inventing authorization",()=>{
+ const c=retainContext([u("1",[{type:"image",mimeType:"image/jpeg",data:"BINARY"}])]);
+ assert.equal(c.omittedNewestUserMessage,false);assert.equal(c.messages[0]!.content,"");
+ assert.equal(c.messages[0]!.uninspectedAttachments?.length,1);
+});
+test("unknown nontext input still withholds incomplete user instructions",()=>{
+ const c=retainContext([u("1",[{type:"text",text:"Use this"},{type:"file",data:"anything"}])]);
  assert.equal(c.messages.length,0);assert.equal(c.omittedUserMessages,1);
+ assert.equal(c.newestUserOmissionReason,"unsupported-content");
 });
 test("raw branch, not global session entries, controls retained scope",()=>{
  const branchA=[u("root","Do not deploy"),u("a","Deploy A")];

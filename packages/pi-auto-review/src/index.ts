@@ -789,7 +789,8 @@ export function createPiAutoReviewExtension(
           }
           const reviewMeta = userReviewMetaFromResult(result, config.model);
           const noticeInput = {
-            outcome: result?.unavailable ? "unavailable" as const : userOutcome,
+            outcome: result?.unavailable || (decision.kind === "deny" && decision.denialSource === "unavailable") ? "unavailable" as const : userOutcome,
+            denialSource: decision.kind === "deny" ? decision.denialSource : undefined,
             surface,
             target,
             rationale: allowCapped && config.interactionMode !== "interactive"

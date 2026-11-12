@@ -69,7 +69,7 @@ export class BoundaryApprovalBroker {
   }
 
   private unavailable(reason: string): BoundaryDecision {
-    return { kind: "deny", review: { ...FAILURE_REVIEW, rationale: `${reason} No permission granted. You may retry this review or choose an allowed alternative.` }, circuitBreakerTripped: false, denialSource: "unavailable", recoveryCommand: false };
+    return { kind: "deny", review: { ...FAILURE_REVIEW, rationale: reason }, circuitBreakerTripped: false, denialSource: "unavailable", recoveryCommand: false };
   }
 
   async review(

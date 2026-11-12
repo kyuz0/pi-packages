@@ -64,3 +64,15 @@ for (const reviewerConversation of [false, true]) {
   assert.deepEqual(retained.messages.filter((m:any)=>m.role==="user").map((m:any)=>m.content),entries.map(e=>e.message.content));
  });
 }
+
+for (const reviewerConversation of [false, true]) {
+ test(`screenshot instructions reach the actual reviewer without image bytes (conversation=${reviewerConversation})`, async()=>{
+  const entries=[{id:"screenshot",type:"message",message:{role:"user",content:[{type:"text",text:"Look at this page, but do not publish."},{type:"image",mimeType:"image/png",data:"PRIVATE_IMAGE_DATA"}]}}];
+  const ctx={sessionManager:{getSessionId:()=>`image-${reviewerConversation}`,getBranch:()=>entries,buildContextEntries:()=>entries},modelRegistry:{getApiKeyAndHeaders:async()=>({ok:true,apiKey:"fixture"})}} as unknown as ExtensionContext;
+  let wire="";
+  const streamSimple=((_model:unknown,context:unknown)=>({result:async()=>{wire=JSON.stringify(context);return {role:"assistant",api:model.api,provider:model.provider,model:model.id,timestamp:Date.now(),stopReason:"stop",content:[{type:"text",text:JSON.stringify({...decision,outcome:"deny",rationale:"Publishing contradicts the original restriction."})}]};}})) as unknown as NonNullable<ReviewerMeta["streamSimple"]>;
+  const result=await complete(ctx,{...DEFAULT_CONFIG,reviewerConversation},request,undefined,async()=>({model,streamSimple}));
+  assert.equal(result.decision.outcome,"deny");assert.equal(result.attempts,1);
+  assert.match(wire,/do not publish/);assert.match(wire,/uninspectedAttachments/);assert.doesNotMatch(wire,/PRIVATE_IMAGE_DATA/);
+ });
+}

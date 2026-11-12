@@ -400,7 +400,12 @@ path makes one model request per review, without format retries.
 
 Original user messages, including expanded skills, are retained whole within
 the configured reviewer input budget (32,768 estimated tokens by default), with
-nearby assistant replies bounded by the same input budget. The full request, policy
+nearby assistant replies bounded by the same input budget. Screenshot messages
+retain their original text and list images as uninspected attachments, without
+sending image bytes to the text-only reviewer. The reviewer defers when missing
+visual facts are needed for the decision; attaching an image does not block
+unrelated reviews. Unknown content types still withhold incomplete instructions.
+The full request, policy
 and evidence must fit that budget before a model is called. Pi's compaction summaries do
 not replace the original user instructions. Omissions are reported; a bounded
 window cannot guarantee enforcement of an instruction that is absent.
