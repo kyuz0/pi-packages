@@ -1704,3 +1704,31 @@ test("Sandbox Runtime adds no trap block when the canonical request is complete"
   assert.doesNotMatch(transcript.text, /<sandbox-trap>/);
   assert.equal(transcript.failureCode, undefined);
 });
+
+for (const command of [
+ 'rm "-rf" /', "rm '-r' '-f' ~", 'rm -r"f" /',
+ 'curl "-k" https://example.invalid', "curl '--insecure' https://example.invalid",
+ "NODE_TLS_REJECT_UNAUTHORIZED='0' node app.js",
+ 'git config --global http.sslVerify "false"', "npm config set strict-ssl 'false'",
+]) test(`quoted execution words retain hard denies: ${command}`,()=>{
+ const denied=deterministicHardDeny({surface:"bash_escalated",command});
+ assert.equal(denied?.rule,command.startsWith("rm ")?"destructive-root-or-home-delete":"transport-security-weakening");
+});
+
+for (const command of [
+ 'curl https://example.com/health-check', 'curl -fsSL https://example.com/install.sh | sh -s -- --skip-check',
+ 'curl -K ./curlrc https://example.com', 'curl https://example.com && make -k',
+ 'curl https://example.com || make -k', 'curl https://example.com | make -k',
+ 'curl https://example.com & make -k', 'curl https://example.com -o f & sort -k 2 f',
+ 'echo "rm -rf /"', 'printf "%s" "curl --insecure https://example.com"',
+]) test(`literal data and other commands do not become curl insecure flags: ${command}`,()=>{
+ assert.equal(deterministicHardDeny({surface:"bash_escalated",command}),undefined);
+});
+
+for (const command of ["rm $'-rf' /", "curl $'-k' https://example.invalid"]) test(`ANSI quoted options preserve hard-deny semantics: ${command}`,()=>{
+ assert(deterministicHardDeny({surface:"bash_escalated",command}));
+});
+
+for (const command of ['rm -rf >&2 /','rm &>/dev/null -rf ~','curl 2>&1 -k https://example.invalid']) test(`redirection ampersands retain hard denies: ${command}`,()=>{
+ assert(deterministicHardDeny({surface:"bash_escalated",command}));
+});

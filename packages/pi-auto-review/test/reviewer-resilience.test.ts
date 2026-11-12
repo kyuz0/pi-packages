@@ -204,3 +204,41 @@ test("past review turns cannot retain current-action flags, corrections or instr
  assert.equal(prior.historicalAction,true);
  assert(!("formatCorrection" in prior));assert(!("currentAction" in prior));assert(!("evidence" in prior));assert(!("override" in prior));
 });
+
+test("failed owner and successful concurrent fork cannot leave reusable poisoned history",async()=>{
+ const f=fixture();await f.run();
+ let enter!:()=>void,release!:()=>void;
+ const entered=new Promise<void>(r=>enter=r),gate=new Promise<void>(r=>release=r);
+ let calls=0;f.setNext(async()=>{if(calls++===0){enter();await gate;throw Error("offline");}return verdict();});
+ const owner=f.run({retries:0});await entered;
+ let fork;
+ try { fork=await f.run({retries:0}); } finally { release(); }
+ assert.equal(fork.decision.outcome,"allow");assert.equal(fork.summary.conversation?.committed,false);
+ assert.equal((await owner).decision.outcome,"defer");
+ f.setNext(async()=>verdict());assert.equal((await f.run({retries:0})).decision.outcome,"allow");
+ assert.equal(f.seen.at(-1)!.messages.filter(m=>m.role!=="system").length,1);
+});
+
+test("rate limit beyond shared deadline does not retry or commit",async()=>{
+ const f=fixture();f.setNext(async()=>({...verdict(),stopReason:"error",errorMessage:"429 rate limit",providerResponse:{status:429,headers:{"retry-after":"1"}}}));
+ const result=await f.run({timeoutMs:100,retries:2});
+ assert.equal(result.decision.outcome,"defer");assert.equal(f.seen.length,1);assert.equal(result.summary.conversation?.committed,false);
+ assert.equal(result.summary.attempts[0]!.willRetry,false);
+});
+
+test("an exact retry cannot approve unavailable newest instruction evidence",async()=>{
+ const f=fixture();f.add(user("newest","x".repeat(20000)));
+ const result=await complete(f.ctx,{...DEFAULT_CONFIG,maxReviewerInputTokens:4096},{id:"bound",source:"permission-system",surface:"bash_escalated",operation:"execute",command:"printf CHECK",cwd:"/workspace"},{userOverride:{originalRequestId:"earlier",approvedAt:Date.now()}},async()=>{throw Error("provider must not run");});
+ assert.equal(result.decision.outcome,"defer");assert.equal(result.attempts,0);
+ assert.match(result.decision.rationale,/newest user message/);
+});
+
+
+test("cleanup uses the captured signal when the host invalidates context getters",async()=>{
+ const f=fixture();let invalid=false;
+ Object.defineProperty(f.ctx,"signal",{configurable:true,get(){if(invalid)throw Error("stale context");return f.controller.signal;}});
+ f.setNext(async()=>{invalid=true;return verdict();});
+ const result=await f.run();assert.equal(result.decision.outcome,"allow");
+ invalid=false;f.setNext(async()=>verdict());assert.equal((await f.run()).decision.outcome,"allow");
+ assert.equal(f.seen.at(-1)!.messages.filter(m=>m.role!=="system").length,3);
+});

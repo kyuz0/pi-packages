@@ -479,7 +479,7 @@ test("recommendations require ask-path success and zero denials, failures, unsaf
   assert.equal(mixedForwarding.suggestedAllowRules[0]?.successfulEvidence, 5);
 });
 
-test("policy, infrastructure, and authorizer allows do not count as evidence while session and auto approvals do", () => {
+test("only human and human-session approvals count as recommendation evidence", () => {
   const report = reportFor([
     aggregate({ resolution: "policy_allow", count: 20 }),
     aggregate({ resolution: "infrastructure_auto_allowed", count: 20 }),
@@ -487,10 +487,10 @@ test("policy, infrastructure, and authorizer allows do not count as evidence whi
     aggregate({ resolution: "session_approved", count: 2 }),
     // permission-system 30.2 reports both narrow and both-directions human
     // session grants through this same public decision resolution.
-    aggregate({ resolution: "user_approved_for_session", count: 2 }),
-    aggregate({ resolution: "auto_approved", count: 3 }),
+    aggregate({ resolution: "user_approved_for_session", count: 3 }),
+    aggregate({ resolution: "auto_approved", count: 30 }),
   ]);
-  assert.equal(report.suggestedAllowRules[0]?.successfulEvidence, 7);
+  assert.equal(report.suggestedAllowRules[0]?.successfulEvidence, 5);
   assert.equal(
     report.approvalSources.some((item) => item.name.startsWith("authorizer_allowed/")),
     true,

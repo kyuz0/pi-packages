@@ -741,7 +741,11 @@ for (const failure of ["defer", "throw", "deny"]) test(`automatic mode returns $
  const context={sessionId:"auto",scopeKey:"auto",issueGrant:true};
  for(let i=0;i<6;i++){
   const d=await broker.review(request,context);assert.equal(d.kind,"deny");
-  if(d.kind==="deny"){assert.equal(d.circuitBreakerTripped,false);assert.equal(d.recoveryCommand,false);}
+  if(d.kind==="deny"){
+   assert.equal(d.circuitBreakerTripped,false);assert.equal(d.recoveryCommand,false);
+   assert.equal(d.denialSource,failure==="throw"?"unavailable":"reviewer");
+   if(failure==="defer")assert.equal(d.review.outcome,"defer");
+  }
  }
  ready=true;const d=await broker.review(request,context);assert.equal(d.kind,"allow");assert.equal(calls,7);
  assert.ok(d.kind==="allow"&&d.grant&&broker.consumeGrant(request,"auto",d.grant.token));

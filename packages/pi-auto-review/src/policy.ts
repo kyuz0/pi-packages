@@ -501,7 +501,7 @@ function hardDenyCommand(command: string): HardDeny | undefined {
   // of a real upload.
   const structural = structuralScanText(command);
 
-  for (const segment of structural.split(/&&|\|\||;|\n/)) {
+  for (const segment of structural.split(/;|\n|\|[|&]?|&&|(?<![<>])&(?!>)/)) {
     const isRm = /(?:^|\s)(?:\/[^\s/]+)*\/?rm(?:\s|$)/i.test(segment);
     const recursive =
       /(?:^|\s)--recursive(?:\s|$)/i.test(segment) ||
@@ -522,16 +522,19 @@ function hardDenyCommand(command: string): HardDeny | undefined {
     }
   }
 
-  if (
-    /\bcurl\b[^;\n]*(?:--insecure\b|-[A-Za-z]*k[A-Za-z]*(?:\s|$))/i.test(
-      structural,
-    ) ||
-    /\bwget\b[^;\n]*--no-check-certificate\b/i.test(structural) ||
-    /\bgit\s+config\b[^;\n]*http\.sslverify\s+false\b/i.test(structural) ||
-    /\bnpm\s+config\s+set\s+strict-ssl\s+false\b/i.test(structural) ||
-    /\bNODE_TLS_REJECT_UNAUTHORIZED\s*=\s*0\b/i.test(structural)
-  ) {
-    return {
+  for (const segment of structural.split(/;|\n|\|[|&]?|&&|(?<![<>])&(?!>)/)) {
+    const curl = /\bcurl\b/i.exec(segment);
+    const curlArguments = curl ? segment.slice(curl.index + curl[0].length) : "";
+    // Short flags are case-sensitive: -K loads a config, while -k disables
+    // verification. Only match actual option words, never URL suffixes or
+    // flags belonging to a later pipeline/conditional command.
+    const insecureCurl = curl && /(?:^|\s)(?:--insecure|-[A-Za-z]*k[A-Za-z]*)(?=\s|$)/.test(curlArguments);
+    if (insecureCurl ||
+      /\bwget\b[^;\n]*--no-check-certificate\b/i.test(segment) ||
+      /\bgit\s+config\b[^;\n]*http\.sslverify\s+false\b/i.test(segment) ||
+      /\bnpm\s+config\s+set\s+strict-ssl\s+false\b/i.test(segment) ||
+      /\bNODE_TLS_REJECT_UNAUTHORIZED\s*=\s*0\b/i.test(segment)
+    ) return {
       rule: "transport-security-weakening",
       reason: "disabling TLS or certificate verification is forbidden",
     };

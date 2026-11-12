@@ -77,8 +77,8 @@ Permission-system downgrades authorizer allows on `path` and
 `autoConfirmBoundedAllows` can bind the exact model allow to the immediately
 following recognized permission dialog. The bridge is request-ID-bound,
 expires after ten seconds, and is consumed once. RPC confirms only the matching
-one-time `Yes` choice, never a session grant. Mode, component, request, or
-event-order mismatches leave the original human dialog in place.
+one-time `Yes` choice, never a session grant. Unrecognized dialogs remain under
+human control; conflicting recognized prompts are denied.
 
 Permission-system 31.x also projects paths named directly by `for`/`select`
 word lists and `case` subjects onto the existing `path` and
@@ -216,7 +216,9 @@ Project configuration may only lower timeouts, token/evidence limits, retries,
 and grant TTL, set `failureMode` to `"deny"`, set `breakGlassEnabled` to
 `false`, or remove auto-confirmed surfaces. It cannot re-enable break glass,
 select a model, raise a trusted limit, or weaken fail-closed behavior. Invalid
-configuration disables the reviewer for that session.
+configuration blocks reviewed operations for that session. The deny-only
+authorizer remains registered, so automatic mode cannot fall back to a human
+approval dialog. Fix the configuration and reload the session.
 
 The trusted user config may set `policyAudit.enabled` and a retention of
 1–3,650 days. Project config may only set `enabled: false` or shorten the
@@ -619,3 +621,8 @@ each result to its original question and retains the selected option or typed
 answer as user evidence. Cancelled dialogs, tool errors, unmatched results and
 ordinary tool text cannot grant permission. Only configure tools whose answer
 channel you trust; project configuration cannot add trusted question tools.
+
+## Testing
+
+See [TESTING.md](TESTING.md) for regression coverage, focused commands, installed
+Pi/Pendant checks and authorized live-review testing.

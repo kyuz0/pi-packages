@@ -21,6 +21,8 @@ test('RPC model allow approves the exact ask once, never a session grant',async(
   confirmer.handlePrompt(event(),ctx as never);
   assert.equal(await ctx.ui.select(title(),options),'Yes');
   assert.equal(humanCalls.length,0);
+  assert.equal(confirmer.consumeAutoApproval('request-1'),true);
+  assert.equal(confirmer.consumeAutoApproval('request-1'),false);
   assert.equal(ctx.ui.select,original);
   assert.equal(await ctx.ui.select(title(),options),'No');
   assert.equal(humanCalls.length,1);

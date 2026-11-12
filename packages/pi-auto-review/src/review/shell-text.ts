@@ -210,7 +210,7 @@ function readHeredoc(
  * substitutions are preserved verbatim. An unterminated quote returns the
  * original text unchanged (fail-closed).
  */
-export function stripQuotedLiterals(text: string): string {
+export function stripQuotedLiterals(text: string, preserveAtoms = false): string {
   let result = "";
   let index = 0;
   while (index < text.length) {
@@ -218,6 +218,13 @@ export function stripQuotedLiterals(text: string): string {
     if (character === "'" || character === '"') {
       const quoted = readPlainQuote(text, index, character);
       if (!quoted) return text;
+      if (preserveAtoms && /^[A-Za-z0-9_.=-]*$/.test(quoted.body)) {
+        // A quoted single word still names an executable, option or value.
+        // Remove its quotes, including adjacent word fragments (-r"f").
+        result += quoted.body;
+        index = quoted.end;
+        continue;
+      }
       result +=
         character +
         (character === "'"
@@ -230,7 +237,8 @@ export function stripQuotedLiterals(text: string): string {
     if (character === "$" && text[index + 1] === "'") {
       const quoted = readAnsiCQuote(text, index);
       if (!quoted) return text;
-      result += `$'${literalQuotedBody(quoted.body)}'`;
+      result += preserveAtoms && /^[A-Za-z0-9_.=-]*$/.test(quoted.body)
+        ? quoted.body : `$'${literalQuotedBody(quoted.body)}'`;
       index = quoted.end;
       continue;
     }
@@ -486,10 +494,10 @@ export function shellExpansionLimitExceeded(text: string): boolean {
  */
 export function structuralScanText(text: string): string {
   const { payloads, limitExceeded } = nestedInterpreterPayloads(text);
-  const parts = [limitExceeded ? text : stripQuotedLiterals(text)];
+  const parts = [limitExceeded ? text : stripQuotedLiterals(text, true)];
   for (const payload of payloads) {
     parts.push(
-      payload.kind === "shell" ? stripQuotedLiterals(payload.text) : payload.text,
+      payload.kind === "shell" ? stripQuotedLiterals(payload.text, true) : payload.text,
     );
   }
   return parts.join("\n");

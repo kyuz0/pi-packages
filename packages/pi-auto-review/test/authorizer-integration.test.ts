@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -119,9 +119,11 @@ function harness(
   behavior: ModelBehavior,
   options: {
     config?: Config;
+    cwd?: string;
     providerAvailable?: boolean;
     signal?: AbortSignal;
     interactiveTui?: boolean;
+    rpcUi?: boolean;
     uiPromptRequestId?: string;
     recognizePermissionComponent?: boolean;
     settledBeforePrompt?: Record<string, unknown>;
@@ -281,11 +283,12 @@ function harness(
   }
   const context = {
     get model() { return sessionModel; },
-    cwd: process.cwd(),
+    cwd: options.cwd ?? process.cwd(),
     signal: options.signal,
     mode: options.interactiveTui ? "tui" : "rpc",
-    hasUI: options.interactiveTui === true,
+    hasUI: options.interactiveTui === true || options.rpcUi === true,
     ui: {
+      async select() { uiDecisions.push("human RPC selection"); return "No"; },
       notify(message: string, type: unknown) {
         notifications.push({ message, type });
       },
@@ -378,7 +381,7 @@ function harness(
         {
           async authorize(details) {
             terminalCalls++;
-            if (options.interactiveTui) {
+            if (options.interactiveTui || options.rpcUi) {
               const promptValue =
                 (typeof details.path === "string" && details.path) ||
                 (typeof details.command === "string" && details.command) ||
@@ -424,6 +427,13 @@ function harness(
               });
               if (options.settledAfterPrompt) {
                 handlers.get("agent_settled")?.(options.settledAfterPrompt, context);
+              }
+              if (options.rpcUi) {
+                const selected = await context.ui.select(
+                  `Permission Required\ntool : bash\nsurface : ${gateSurface}\ncommand : ${promptValue}`,
+                  ["Yes","Yes, allow for this session","No","No, provide reason"],
+                );
+                return {approved:selected === "Yes",state:selected === "Yes"?"approved":"denied"};
               }
               return context.ui.custom(
                 (_tui, _theme, _keybindings, _done) =>
@@ -658,7 +668,7 @@ test("shutdown invalidates a late session-scoped registration task", async () =>
   assert.equal(instance.disposalCalls, 0);
 });
 
-test("a new ready session disposes the previous authorizer before registering", async () => {
+test("foreign ready events preserve own registration; actual session changes replace it", async () => {
   const instance = harness(allow);
   const nextRegistry = new AuthorizerRegistry();
   let nextDisposals = 0;
@@ -683,6 +693,11 @@ test("a new ready session disposes the previous authorizer before registering", 
       adjudicatesLocally: true,
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(instance.disposalCalls, 0);
+    assert.equal(nextRegistry.get("pi-auto-review"), undefined);
+    instance.context.sessionManager.getSessionId = () => "next-session";
+    instance.handlers.get("session_start")?.({}, instance.context);
+    instance.events.emit("permissions:ready", {sessionId:"next-session",adjudicatesLocally:true});
     assert.equal(instance.disposalCalls, 1);
     assert.ok(nextRegistry.get("pi-auto-review"));
   } finally {
@@ -3399,8 +3414,15 @@ test("real permission-system authorizer chain integration", async (t) => {
 });
 
 test("automatic mode returns reviewer uncertainty to the agent without staging human confirmation",async()=>{
- const instance=harness(JSON.stringify({...JSON.parse(allow),outcome:"defer",risk_level:"medium",rationale:"Insufficient evidence"}),{config:config({interactionMode:"automatic"})});
- try {const result=await instance.authorize("bash");assert.equal(result.decision.approved,false);assert.match(JSON.stringify(result),/Insufficient evidence/);} finally {instance.dispose();}
+ const instance=harness(JSON.stringify({...JSON.parse(allow),outcome:"defer",risk_level:"medium",rationale:"Insufficient evidence. Supply the target path."}),{config:config({interactionMode:"automatic"}),interactiveTui:true});
+ try {
+  const result=await instance.authorize("bash");assert.equal(result.decision.approved,false);assert.equal(result.terminalCalls,0);
+  assert.match(JSON.stringify(result),/Insufficient evidence/);assert.doesNotMatch(JSON.stringify(result),/Retry after/i);
+  const rendered=()=>renderedWidgetLines(instance.widgets.at(-1)).join("\n");
+  assert.match(rendered(),/deferred/i);assert.doesNotMatch(rendered(),/unavailable/i);
+  instance.events.emit("permissions:decision",{requestId:"request-bash",result:"deny",resolution:"authorizer_denied"});
+  assert.match(rendered(),/Insufficient evidence/);assert.match(rendered(),/deferred/i);
+ } finally {instance.dispose();}
 });
 
 for (const behavior of [new Error("offline"), {stopReason:"length",content:[]}]) test("automatic review failure never calls the human terminal",async()=>{
@@ -3409,5 +3431,116 @@ for (const behavior of [new Error("offline"), {stopReason:"length",content:[]}])
 });
 test("automatic mode refuses capped file access without opening a confirmation",async()=>{
  const instance=harness(allow,{config:config({interactionMode:"automatic"})});
- try {const result=await instance.authorize("external_directory");assert.equal(result.decision.approved,false);assert.equal(result.terminalCalls,0);assert.match(JSON.stringify(result),/bash_escalate/);} finally {instance.dispose();}
+ try {const result=await instance.authorize("external_directory");assert.equal(result.decision.approved,false);assert.equal(result.terminalCalls,0);assert.equal(instance.modelContexts.length,0);assert.match(JSON.stringify(result),/bash_escalate/);} finally {instance.dispose();}
 });
+
+
+for (const mode of ["automatic","interactive"] as const) {
+ for (const behavior of [new Error("offline"), {stopReason:"length",content:[]}, "not JSON"]) {
+  test(`${mode} conversation outages honor deny without a human dialog`,async()=>{
+   const instance=harness(behavior,{config:config({interactionMode:mode,retainedContext:true,reviewerConversation:true,failureMode:"deny"})});
+   try {
+    const result=await instance.authorize("bash_escalated");
+    assert.equal(result.decision.approved,false);assert.equal(result.terminalCalls,0);
+    assert(instance.telemetry.some(e=>e.type==="review_complete"&&e.failureMode==="deny"));
+   } finally {instance.dispose();}
+  });
+ }
+}
+
+test("invalid trusted configuration leaves a deny-only authorizer installed",async()=>{
+ const instance=harness(allow,{config:{...config({interactionMode:"automatic"}),timeoutMs:1500.5}});
+ try {
+  assert.equal(instance.registrationCalls,1);
+  const result=await instance.authorize("bash_escalated");assert.equal(result.decision.approved,false);
+  assert.equal(result.terminalCalls,0);assert.equal(instance.modelContexts.length,0);
+ } finally {instance.dispose();}
+});
+
+test("invalid project configuration never falls through to a human dialog",async()=>{
+ const cwd=mkdtempSync(join(tmpdir(),"review-config-"));mkdirSync(join(cwd,".pi"));writeFileSync(join(cwd,".pi/pi-auto-review.json"),JSON.stringify({model:"untrusted-model"}));
+ const instance=harness(allow,{cwd,config:config({interactionMode:"automatic"})});
+ try {
+  assert.equal(instance.registrationCalls,1);
+  const result=await instance.authorize("bash_escalated");assert.equal(result.decision.approved,false);
+  assert.equal(result.terminalCalls,0);assert.equal(instance.modelContexts.length,0);
+ } finally {instance.dispose();rmSync(cwd,{recursive:true,force:true});}
+});
+
+test("automatic refusal never suggests retrying a model denial",async()=>{
+ const instance=harness(deny,{config:config({interactionMode:"automatic",retainedContext:true,reviewerConversation:true})});
+ try {
+  const result=await instance.authorize("bash_escalated");assert.equal(result.decision.approved,false);
+  assert.equal(result.terminalCalls,0);assert.doesNotMatch(JSON.stringify(result),/Retry a failed|retry after/i);
+  assert.match(JSON.stringify(result),/Do not retry, rephrase/);
+ } finally {instance.dispose();}
+});
+
+test("repeated hard denials keep policy wording without a recovery command",async()=>{
+ const instance=harness(allow,{config:config({interactionMode:"automatic"}),interactiveTui:true});
+ try {
+  for(let i=0;i<4;i++)await instance.authorize("bash_escalated",{requestId:`hard-${i}`,command:"rm -rf $HOME"});
+  assert.equal(instance.modelContexts.length,0);
+  const notices=renderedWidgetLines(instance.widgets.at(-1)).join("\n");
+  assert.doesNotMatch(notices,/Auto-review · stopped|use \/auto-review-approve/);
+  assert.match(notices,/local safety policy|Local safety policy/);
+ } finally {instance.dispose();}
+});
+
+test("an immediate agent turn preserves the completed refusal explanation",async()=>{
+ const instance=harness(deny,{config:config({interactionMode:"automatic"}),interactiveTui:true});
+ try {
+  await instance.authorize("bash_escalated");const count=instance.widgets.length;
+  instance.handlers.get("turn_start")?.({},instance.context);
+  assert.equal(instance.widgets.length,count);assert(instance.widgets.at(-1)?.content);
+ } finally {instance.dispose();}
+});
+
+
+test("a session change while review is pending cannot return a stale allow",async()=>{
+ let release!:()=>void,enter!:()=>void;
+ const gate=new Promise<void>(r=>release=r),entered=new Promise<void>(r=>enter=r);
+ const instance=harness(async()=>{enter();await gate;return allow;},{config:config({interactionMode:"automatic",retainedContext:true,reviewerConversation:true})});
+ try {
+  const pending=instance.authorize("bash_escalated");await entered;
+  instance.handlers.get("session_start")?.({},instance.context);release();
+  const result=await pending;assert.equal(result.decision.approved,false);assert.equal(result.terminalCalls,0);
+  assert.match(JSON.stringify(result),/session changed during review/i);
+ } finally {release?.();instance.dispose();}
+});
+
+
+for (const mode of ["tui","rpc"]) for (const resolution of ["user_approved","auto_approved"]) for (const forwarded of [false,true]) {
+ test(`${mode} auto-confirm ${resolution} stays machine evidence, forwarded=${forwarded}`,async()=>{
+  const previousHome=process.env.HOME;
+  const home=mkdtempSync(join(tmpdir(),"review-auto-confirm-audit-"));process.env.HOME=home;
+  const instance=harness(allow,{
+   interactiveTui:mode==="tui",rpcUi:mode==="rpc",
+   config:config({interactionMode:"interactive",policyAudit:{enabled:true,retentionDays:180}}),
+  });
+  try {
+   const requestId=`machine-${mode}-${resolution}-${forwarded}`;
+   const result=await instance.authorize("external_directory_read",{
+    requestId,command:"cat /tmp/reviewed",
+    ...(forwarded?{forwarding:{requesterSessionId:"different-child-session",agentName:"child"}}:{}),
+   });
+   assert.equal(result.decision.approved,true);
+   assert(!instance.uiDecisions.includes("human RPC selection"),"RPC approval did not invoke the human selector");
+   instance.handlers.get("agent_settled")?.({aborted:true},instance.context);
+   instance.events.emit("permissions:decision",{
+    requestId,surface:"external_directory_read",value:"/tmp/reviewed",result:"allow",resolution,origin:"global",
+    ...(forwarded?{forwarding:{requesterSessionId:"different-child-session"}}:{}),
+   });
+   await instance.commands.get("auto-review-policy-audit")!.handler("--min-count 1",instance.context);
+   const entry=instance.appendedEntries.find(item=>item.type==="pi-auto-review-policy-audit");assert.ok(entry);
+   const report=entry.data.report as {total:number;approvalSources:Array<{name:string}>;suggestedAllowRules:unknown[];insufficientEvidence:Array<{successfulEvidence:number}>};
+   assert.equal(report.total,1);
+   assert(report.approvalSources.some(item=>item.name.startsWith("authorizer_allowed/")));
+   assert.deepEqual(report.suggestedAllowRules,[]);
+   assert(report.insufficientEvidence.every(item=>item.successfulEvidence===0));
+  } finally {
+   await instance.dispose();if(previousHome===undefined)delete process.env.HOME;else process.env.HOME=previousHome;
+   rmSync(home,{recursive:true,force:true});
+  }
+ });
+}

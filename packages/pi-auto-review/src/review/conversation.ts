@@ -30,9 +30,10 @@ export async function completeConversation(o: Options): Promise<ReviewResult> {
   };
   if (transcript.failureCode) return finish("defer", "Required action evidence exceeds the input budget. Reduce the request or expanded context before retrying.");
   const controller = new AbortController();
+  const sessionSignal = ctx.signal;
   let timedOut = false;
   const abort = () => controller.abort();
-  if (ctx.signal?.aborted) abort(); else ctx.signal?.addEventListener("abort", abort, { once: true });
+  if (sessionSignal?.aborted) abort(); else sessionSignal?.addEventListener("abort", abort, { once: true });
   const deadline = started + config.timeoutMs;
   const timer = setTimeout(() => { timedOut = true; abort(); }, Math.max(0, deadline - Date.now()));
   try {
@@ -148,5 +149,5 @@ export async function completeConversation(o: Options): Promise<ReviewResult> {
     const kind = controller.signal.aborted ? timedOut ? "timeout" : "abort" : classifyProviderFailure(undefined, error, {});
     if (kind !== "none") summary.errorCounts[kind] = (summary.errorCounts[kind] ?? 0) + 1;
     return finish("defer", controller.signal.aborted ? "Reviewer cancelled or its deadline expired." : `Reviewer unavailable (${kind}); no automatic permission granted.`);
-  } finally { clearTimeout(timer); ctx.signal?.removeEventListener("abort", abort); lease?.release(); }
+  } finally { clearTimeout(timer); sessionSignal?.removeEventListener("abort", abort); lease?.release(); }
 }

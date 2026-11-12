@@ -55,11 +55,21 @@ const DEFAULT_PENDING_TTL_MS = 10_000;
 export class PermissionUiAutoConfirmer {
   private readonly pending = new Map<string, PendingApproval>();
   private activeAttempt: PromptAttempt | undefined;
+  private readonly automaticDecisions = new Set<string>();
 
   constructor(
     private readonly enabledSurfaces: () => readonly string[],
     private readonly pendingTtlMs = DEFAULT_PENDING_TTL_MS,
   ) {}
+
+  consumeAutoApproval(requestId: unknown): boolean {
+    return typeof requestId === "string" && this.automaticDecisions.delete(requestId);
+  }
+
+  private noteAutoApproval(requestId: string): void {
+    if (this.automaticDecisions.size >= 512) this.automaticDecisions.delete(this.automaticDecisions.values().next().value!);
+    this.automaticDecisions.add(requestId);
+  }
 
   stage(requestId: string, surface: string): boolean {
     this.pruneExpired();
@@ -117,6 +127,8 @@ export class PermissionUiAutoConfirmer {
 
   clear(): void {
     this.pending.clear();
+    // Completed machine approvals may still receive their final decision after
+    // an abort. Retain their bounded IDs until consumed, never label them human.
     const attempt = this.activeAttempt;
     this.activeAttempt = undefined;
     if (!attempt) return;
@@ -162,7 +174,7 @@ export class PermissionUiAutoConfirmer {
         !selectOptions?.signal?.aborted;
       release();
       // Approve this ask only, never either session-grant option.
-      if (recognized) return Promise.resolve("Yes");
+      if (recognized) { this.noteAutoApproval(event.requestId); return Promise.resolve("Yes"); }
       return Reflect.apply(previousSelect, ui, [title, options, selectOptions]);
     }) as UiSelect;
     attempt.restore = restore;
@@ -230,7 +242,9 @@ export class PermissionUiAutoConfirmer {
           done(result);
         };
 
-        attempt.autoApprove = () => finish(AUTO_APPROVED_DECISION);
+        attempt.autoApprove = () => {
+          if (!uiFinished) { this.noteAutoApproval(event.requestId); finish(AUTO_APPROVED_DECISION); }
+        };
         attempt.denyForUiConflict = () => finish(UI_CONFLICT_DENIED_DECISION);
 
         let produced: unknown;

@@ -49,7 +49,7 @@ export type PolicyAuditReportOptions = {
 // instead of `user_approved`. Counting those here would create a feedback loop:
 // machine review allows → evidence → suggested auto-allow rule → review bypassed.
 const SUCCESS_RESOLUTIONS = new Set([
-  "user_approved", "user_approved_for_session", "session_approved", "auto_approved",
+  "user_approved", "user_approved_for_session", "session_approved",
 ]);
 const FAILURE_RESOLUTIONS = new Set(["confirmation_unavailable", "gate_error"]);
 

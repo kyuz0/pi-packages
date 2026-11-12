@@ -270,8 +270,8 @@ function outcomeAccent(
     case "auto_confirm":
     case "needs_confirmation":
       return "success";
-    // Deferred also warns: it awaits a human decision, so it must be clearly
-    // visible (theme warning) and stand out until resolved.
+    // Uncertainty needs more evidence or a decision; automatic mode still
+    // blocks without opening a human dialog.
     case "defer":
       return "warning";
     case "deny":
@@ -833,7 +833,7 @@ export class UserReviewWidgetController {
     // explanation and usage when it already describes this final outcome.
     const retainReview = current.data.phase === "complete" &&
       ((record.resolution === "authorizer_denied" &&
-        ["deny", "unavailable", "circuit_breaker"].includes(current.data.outcome)) ||
+        ["deny", "defer", "unavailable", "circuit_breaker"].includes(current.data.outcome)) ||
        (record.result === "allow" && current.data.outcome === "allow"));
     const data = retainReview ? current.data : buildUserReviewWidgetData(input);
     const notice = retainReview && current.notice ? current.notice : buildUserReviewNotice(input);
@@ -846,6 +846,14 @@ export class UserReviewWidgetController {
     this.#current = { ...current, permissionFinal: true, data, notice };
     if (!setWidget(current.ctx, data)) notifyUserReview(current.ctx, notice);
     if (!denied) this.#scheduleDismiss(current.generation, current.ctx);
+  }
+
+  turnStart(ctx?: ExtensionContext): void {
+    // A tool refusal is followed immediately by another agent turn. Preserve
+    // that explanation until a new review replaces it or the session changes.
+    if (this.#current?.data?.phase === "complete" &&
+        ["deny", "unavailable", "circuit_breaker", "defer"].includes(this.#current.data.outcome)) return;
+    this.clear(ctx);
   }
 
   clear(ctx?: ExtensionContext): void {

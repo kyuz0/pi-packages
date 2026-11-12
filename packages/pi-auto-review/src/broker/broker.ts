@@ -193,7 +193,9 @@ export class BoundaryApprovalBroker {
     }
 
     this.audit("review_decision", request, review);
-    if (!this.#humanFallback && review.outcome === "defer") return this.unavailable(review.rationale);
+    if (!this.#humanFallback && review.outcome === "defer") return {
+      kind: "deny", review, circuitBreakerTripped: false, denialSource: "reviewer", recoveryCommand: false,
+    };
     if (!this.#humanFallback && review.outcome === "deny") return {
       kind: "deny", review, circuitBreakerTripped: false, denialSource: "reviewer", recoveryCommand: false,
     };

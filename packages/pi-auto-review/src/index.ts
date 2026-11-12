@@ -88,6 +88,7 @@ import {
   type ReviewerTelemetryEvent,
 } from "./review/index.ts";
 import { ReviewExecutionError } from "./review/index.ts";
+import { DEFAULT_CONFIG } from "./review/config.ts";
 
 export {
   applyProjectConfig,
@@ -197,11 +198,17 @@ function renderPolicyAuditEntry(
 export function createPiAutoReviewExtension(
   options: PiAutoReviewExtensionOptions = {},
 ): (pi: ExtensionAPI) => void {
-  const trustedConfig = Object.freeze(
-    options.config !== undefined
-      ? validateConfig(options.config, "trusted config")
-      : loadTrustedConfig(),
-  );
+  let initializationError: string | undefined;
+  let trustedConfig: Readonly<Config>;
+  try {
+    trustedConfig = Object.freeze(options.config !== undefined
+      ? validateConfig(options.config, "trusted config") : loadTrustedConfig());
+  } catch (error) {
+    initializationError = error instanceof Error ? error.message : String(error);
+    // Keep the deny-only authorizer installed when configuration is invalid.
+    // Throwing here would silently restore the host's human approval fallback.
+    trustedConfig = Object.freeze({...DEFAULT_CONFIG, policyAudit: {enabled: false, retentionDays: 180}});
+  }
   const allowUntrustedWorkspace =
     options.allowUntrustedWorkspace === true ||
     process.env.PI_AUTO_REVIEW_ALLOW_UNTRUSTED_DEV === "1";
@@ -214,6 +221,7 @@ export function createPiAutoReviewExtension(
     // Renderer registration is observational.
   }
   let context: ExtensionContext | undefined;
+  let activeSessionId: string | undefined;
   let config: Readonly<Config> = trustedConfig;
   let disposeAuthorizer: (() => void) | undefined;
   let registeredSessionId: string | undefined;
@@ -242,7 +250,7 @@ export function createPiAutoReviewExtension(
       reviewWidget.promptEnd();
     });
     pi.on("turn_start", () => {
-      reviewWidget.clear(context);
+      reviewWidget.turnStart(context);
     });
   } catch {
     // Older pi: widget behavior is unchanged.
@@ -298,6 +306,13 @@ export function createPiAutoReviewExtension(
     new BoundaryApprovalBroker({
       reviewer: async (request, reviewerContext) => {
         if (!context) throw new Error("review context is unavailable");
+        // The host caps these native file tools at a human confirmation even
+        // after model approval. Automatic mode cannot use that route. The
+        // broker has already enforced hard denies before reaching this hook.
+        if (config.interactionMode !== "interactive" && boundedRequest(request.surface)) return {
+          outcome: "deny", riskLevel: "medium", userAuthorization: "unknown",
+          rationale: "This native file tool cannot be approved in automatic mode. Use sandboxed bash for allowed files, or bash_escalate with the exact command and justification for automatic review.",
+        };
         try {
           const result = await complete(
             context,
@@ -307,6 +322,10 @@ export function createPiAutoReviewExtension(
             resolveReviewerMeta,
             emitTelemetry,
           );
+          if (result.summary.controllerFailure) {
+            const errorClass = result.summary.attempts.at(-1)?.errorClass ?? "unknown";
+            throw new ReviewExecutionError(errorClass === "none" ? "unknown" : errorClass, result.summary);
+          }
           if (request.source === "permission-system") {
             reviewResults.set(request.id, result);
           }
@@ -640,6 +659,7 @@ export function createPiAutoReviewExtension(
 
   pi.on("session_start", (_event, ctx) => {
     shuttingDown = false;
+    activeSessionId = ctx.sessionManager.getSessionId();
     registrationEpoch++;
     disposeAuthorizer?.();
     disposeAuthorizer = undefined;
@@ -651,6 +671,7 @@ export function createPiAutoReviewExtension(
     telemetryCompleted.clear();
     uiAutoConfirmer.clear();
     try {
+      if (initializationError) throw new Error(initializationError);
       config = sessionConfig(
         ctx.cwd,
         trustedConfig,
@@ -690,7 +711,11 @@ export function createPiAutoReviewExtension(
 
   pi.events.on("permissions:decision", (event) => {
     reviewWidget.permissionDecision(event);
-    policyAudit.record(event as PermissionDecisionLike);
+    const decision = event as PermissionDecisionLike;
+    // RPC and TUI auto-confirmations can look like human clicks to the host.
+    // They must never become evidence for removing the model review later.
+    policyAudit.record(uiAutoConfirmer.consumeAutoApproval(decision.requestId)
+      ? {...decision, resolution: "authorizer_allowed"} : decision);
   });
 
   pi.events.on("permissions:ready", (event) => {
@@ -707,6 +732,7 @@ export function createPiAutoReviewExtension(
       );
       return;
     }
+    if (!activeSessionId || sessionId !== activeSessionId) return;
     if (registeredSessionId === sessionId && disposeAuthorizer) return;
 
     const epoch = ++registrationEpoch;
@@ -716,7 +742,7 @@ export function createPiAutoReviewExtension(
       registeredSessionId = undefined;
     }
 
-    if (shuttingDown || epoch !== registrationEpoch || !context) return;
+    if (shuttingDown || epoch !== registrationEpoch) return;
     const service = getPermissionsService(sessionId) as
       | PermissionsService
       | undefined;
@@ -753,6 +779,7 @@ export function createPiAutoReviewExtension(
           const request = boundaryRequest(context, details, query);
           const target = reviewTargetFromRequest(request);
           const reviewContext = context;
+          const requestEpoch = registrationEpoch;
           const widgetGeneration = reviewWidget.begin(request.id, reviewContext, {
             surface,
             target,
@@ -765,6 +792,10 @@ export function createPiAutoReviewExtension(
           });
           const result = reviewResults.get(request.id);
           reviewResults.delete(request.id);
+          if (shuttingDown || requestEpoch !== registrationEpoch || context !== reviewContext) return {
+            kind: "deny", reason: "The session changed during review. Review this action again in the current session; no permission was granted.",
+          };
+          const rationale = result?.summary.controllerFailure ?? decision.review.rationale;
           const allowCapped =
             decision.kind === "allow" && boundedRequest(surface);
           const autoConfirmQueued =
@@ -774,7 +805,7 @@ export function createPiAutoReviewExtension(
             uiAutoConfirmer.stage(request.id, surface);
 
           let userOutcome: UserReviewOutcome;
-          if (decision.kind === "deny" && decision.circuitBreakerTripped) {
+          if (decision.kind === "deny" && decision.denialSource === "circuit-breaker") {
             userOutcome = "circuit_breaker";
           } else if (allowCapped && autoConfirmQueued) {
             userOutcome = "auto_confirm";
@@ -782,7 +813,7 @@ export function createPiAutoReviewExtension(
             userOutcome = config.interactionMode === "interactive" ? "needs_confirmation" : "deny";
           } else if (decision.kind === "allow") {
             userOutcome = "allow";
-          } else if (decision.kind === "defer") {
+          } else if (decision.kind === "defer" || decision.review.outcome === "defer") {
             userOutcome = "defer";
           } else {
             userOutcome = "deny";
@@ -795,7 +826,7 @@ export function createPiAutoReviewExtension(
             target,
             rationale: allowCapped && config.interactionMode !== "interactive"
               ? "This file tool requires human confirmation. Automatic mode blocked it; Pi can use sandboxed bash or request review of an exact bash_escalate command."
-              : decision.review.rationale,
+              : rationale,
             recoveryCommand:
               decision.kind === "deny"
                 ? decision.recoveryCommand
@@ -821,7 +852,7 @@ export function createPiAutoReviewExtension(
             reviewerOutcome: decision.review.outcome,
             riskLevel: decision.review.riskLevel,
             userAuthorization: decision.review.userAuthorization,
-            rationale: decision.review.rationale,
+            rationale,
             allowCapped,
             autoConfirmQueued,
             userOutcome,
@@ -856,9 +887,11 @@ export function createPiAutoReviewExtension(
             kind: "deny", reason: "This file tool requires human confirmation under the permission policy. Automatic mode never prompts. Use sandboxed bash for allowed files, or bash_escalate with the exact command and justification for automatic review.",
           };
           if (config.interactionMode !== "interactive" && decision.kind !== "allow") return {
-            kind: "deny", reason: decision.review.rationale + (decision.kind === "deny" && decision.denialSource === "hard-deny"
+            kind: "deny", reason: rationale + (decision.kind === "deny" && decision.denialSource === "hard-deny"
               ? " " + LOCAL_HARD_DENY_AGENT_INSTRUCTION
-              : " The operation was not executed. Retry a failed review, or choose an alternative consistent with the stated restriction; do not bypass it."),
+              : decision.kind === "deny" && decision.denialSource === "unavailable"
+                ? " The operation was not executed. Retry after resolving the review failure; no permission was granted."
+                : " The operation was not executed. Do not retry, rephrase, or circumvent this denial. Continue only with an alternative that respects the restriction or new explicit user instructions."),
           };
           if (allowCapped || decision.kind === "defer") {
             return { kind: "defer" };
@@ -874,11 +907,11 @@ export function createPiAutoReviewExtension(
                   : "Automatic policy critically denied this action and break-glass authorization is disabled. Do not retry, rephrase, or circumvent it.";
           return {
             kind: "deny",
-            reason: `${decision.review.rationale} ${denyInstruction}`,
+            reason: `${rationale} ${denyInstruction}`,
           };
         },
       );
-      if (shuttingDown || epoch !== registrationEpoch || !context) {
+      if (shuttingDown || epoch !== registrationEpoch) {
         dispose();
         return;
       }

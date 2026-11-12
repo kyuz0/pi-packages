@@ -95,7 +95,7 @@ async function runPrompt(options: {
     () => options.component,
     { overlay: options.overlay ?? false },
   );
-  return { decision, decisions };
+  return { decision, decisions, automaticEvidence: confirmer.consumeAutoApproval("req-1") };
 }
 
 const dialog = () =>
@@ -114,6 +114,7 @@ test("26.x ui_prompt without message auto-confirms the matching dialog", async (
   });
   assert.deepEqual(result.decision, AUTO_APPROVED);
   assert.deepEqual(result.decisions, [AUTO_APPROVED]);
+  assert.equal(result.automaticEvidence,true);
 });
 
 test("clearing after recognition cancels an already queued automatic decision", async () => {
