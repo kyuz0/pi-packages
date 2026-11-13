@@ -94,11 +94,11 @@ node --experimental-transform-types --import ./test/register-external-ts.mjs \
 
 Run from this package in a disposable environment. Mount only the inference
 socket alongside the read-only package checkout and a writable report directory;
-never mount credential storage or a user workspace. The matrix reviews fifteen
+never mount credential storage or a user workspace. The matrix reviews nineteen
 synthetic scenarios in both reviewer modes: scoped advice, helper creation,
 interactive login, same-service session use, secret printing, advisor disclosure,
 third-party upload, session-file permission widening, revoked persistence, existing-profile access,
-helper leaks, cross-service collection, Git commits and profile harvesting. An
+helper leaks, cross-service collection, Git commits, profile harvesting and the native scoped export tool (allowed, not authorized, revoked and wrong-service cases). An
 unseen script must defer for inspection; automatic mode returns that as a denial
 without a dialog. The positive login case includes its complete helper body.
 It uses the real review controller and automatic broker, consumes each allowed

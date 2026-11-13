@@ -7,6 +7,7 @@ import { createInterface } from 'node:readline';
 import { randomBytes } from 'node:crypto';
 import { browserRoot, viewerLink } from './viewer.mjs';
 import { startDesktop } from './desktop.mjs';
+import {collectSessionCookies, saveSessionFile, serviceURL} from './session-export.mjs';
 import { BetterWright, createLocalCredentialVault } from 'betterwright';
 
 export class SandboxBrowser {
@@ -15,6 +16,8 @@ export class SandboxBrowser {
   #id = randomBytes(16).toString('hex');
   #pending;
   #client;
+  #endpoint;
+  #ready = false;
   #process;
   #profile;
   #desktop;
@@ -69,6 +72,7 @@ export class SandboxBrowser {
           if (match) finish(null, match[1]);
         });
       });
+      this.#endpoint = endpoint;
       // Continue draining Chromium diagnostics after its readiness message.
       this.#process.stderr.resume();
       this.#client = new BetterWright({ provider: { cdpUrl: endpoint },
@@ -76,6 +80,7 @@ export class SandboxBrowser {
       // Attach policy and download handlers before the viewer can navigate.
       const ready = await this.#client.run('return true');
       if (!ready.ok) throw Error('Browser initialization failed: ' + ready.error);
+      this.#ready = true;
       const child=this.#process;
       const recover=()=>{
         if(this.#closing || this.#process!==child || this.#recovering)return;
@@ -113,11 +118,28 @@ export class SandboxBrowser {
   }
 
   async run(code, options) {
-    return (await this.#ensure()).run(code, options);
+    const result = await (await this.#ensure()).run(code, options);
+    // This adapter owns a local container browser, although Betterwright sees
+    // a custom CDP provider. Preserve other diagnostics and state the real boundary.
+    if (Array.isArray(result.warnings)) result.warnings = [...new Set(result.warnings.map(warning =>
+      typeof warning === 'string' && warning.startsWith('Browser provider: a custom CDP endpoint')
+        ? 'Managed browser: Chromium runs inside this devcontainer. The selected outer network policy governs page traffic; browser-code guards still apply.'
+        : warning))];
+    return result;
   }
 
   async fillCredential(options) {
     return (await this.#ensure()).fillCredential(options);
+  }
+
+  async exportSession(url, {signal} = {}) {
+    serviceURL(url);
+    if (!this.#ready || this.#closing || this.#recovering || !this.#endpoint || !this.#process)
+      throw Error('No active browser session. Open the service and viewer before exporting its login.');
+    const child = this.#process, epoch = this.#epoch;
+    const active = () => !this.#closing && this.#process === child && this.#epoch === epoch && child.exitCode === null && child.signalCode === null;
+    const cookies = await collectSessionCookies(this.#endpoint,url,{signal});
+    return saveSessionFile(cookies,url,{signal,active});
   }
 
   async viewerLink() {
@@ -129,6 +151,8 @@ export class SandboxBrowser {
     process.off('exit', this.#onExit);
     const child = this.#process;
     this.#process = undefined;
+    this.#endpoint = undefined;
+    this.#ready = false;
     if (child && child.exitCode === null && child.signalCode === null) {
       await new Promise(resolve => {
         const timer = setTimeout(() => child.kill('SIGKILL'), 5000);

@@ -384,6 +384,21 @@ on matching sites. Human logins in the native browser viewer are not saved autom
 password saving is disabled. Each session uses a private display with native tabs
 and popups. A closed or crashed browser restarts on the next browser tool call.
 
+After the user signs in, `browser_session_export` can save cookies matching one
+exact service URL for an authorized local script. It returns a private file path
+and count, never cookie values. The file contains a Cookie header value (not a
+Netscape cookie jar), is mode 0600 in a 0700 directory, and stays outside the
+workspace. Native file tools cannot read it; an explicitly reviewed outer-shell
+client can use it only for the same service. Do not print it, send it to advisors,
+or commit it. Re-export when the login expires. Matching respects domain, path,
+Secure and expiry; partitioned and unrelated-service cookies are excluded.
+
+Run `test/browser-session-export.test.mjs` with the package unit suite. In a
+disposable Factory browser container, run `test/browser-session-lifecycle-check.mjs`
+for close, crash and abort cleanup, missing-browser and wrong-origin rejection,
+and continued browser/viewer use after export. Factory's `TESTING.md` covers the
+rendered popup login and actual Pi/Pendant private-client workflow.
+
 Run `test/browser-vault-check.mjs` inside a disposable Factory browser container
 to check shared storage, origin matching, file permissions, trusted filling and
 password redaction with synthetic credentials.

@@ -20,4 +20,23 @@ export default function extension(pi) {
       return { content: [{ type: 'text', text: `Open the live browser: ${url}\nUse the live browser window to interact. Tabs and popup windows appear in the same live view. This link grants browser control; keep it private.` }], details: { url } };
     }
   });
+  pi.registerTool({
+    name:'browser_session_export',
+    label:'Save service login for scripts',
+    description:'After an authorized user login in this session’s browser, save only cookies matching a specific service URL into a private local 0600 Cookie-header file outside the workspace. Returns its path and count, never cookie values. Requires permission review. Scripts can read the file through an authorized bash_escalate command; ordinary sandboxed Bash masks the private home. Does not export passwords, browser profiles or unrelated sites.',
+    promptSnippet:'Hand an authorized service login privately from the live browser to a local script.',
+    promptGuidelines:[
+      'Use browser and browser_viewer to let the user sign in; wait for their reply. Then use browser_session_export only for the service they authorized and the exact API URL their script will call.',
+      'Never print the resulting session file, send its contents to an advisor, or put it in Git. Use it only for requests to that same service. Re-export after the session expires.',
+    ],
+    parameters:{type:'object',properties:{url:{type:'string',description:'Exact HTTPS API URL whose matching session cookies are needed; loopback HTTP is allowed for local applications. No query, fragment or URL credentials.'}},required:['url'],additionalProperties:false},
+    async execute(_id,params,signal) {
+      try {
+        const saved = await browser.exportSession(params.url,{signal});
+        return {content:[{type:'text',text:`Service session saved privately for ${saved.url}. Cookie file: ${saved.path}. Matching cookies: ${saved.cookieCount}. Read it only in the authorized same-service client; do not print its contents.`}],details:saved};
+      } catch(error) {
+        return {isError:true,content:[{type:'text',text:error.message}]};
+      }
+    }
+  });
 }
