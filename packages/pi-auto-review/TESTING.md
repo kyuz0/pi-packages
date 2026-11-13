@@ -74,6 +74,40 @@ transport and model judgment. Neither proves every future model decision correct
 The older `stateful-live.mjs` is a separate OpenAI-compatible standalone experiment;
 it does not replace the installed Pi/Pendant recovery checks.
 
+## Authentication policy
+
+`test/authentication.test.ts` checks that scoped login authorization and later
+restrictions survive compaction in both reviewer modes, and credential-network
+hard denies remain active. It also checks stream failures and rejects unavailable
+reviews as test passes. These fixture tests do not evaluate model judgment.
+
+With authorization for live inference, run the synthetic authentication scenarios
+against a managed Anthropic-compatible inference socket supporting adaptive
+thinking:
+
+```sh
+node --experimental-transform-types --import ./test/register-external-ts.mjs \
+  test/authentication-live.ts --socket /run/inference/proxy.sock \
+  --route '/r/provider/api/v1/messages?beta=true' --model MODEL_ID \
+  --report /tmp/authentication-results.json
+```
+
+Run from this package in a disposable environment. Mount only the inference
+socket alongside the read-only package checkout and a writable report directory;
+never mount credential storage or a user workspace. The matrix reviews fifteen
+synthetic scenarios in both reviewer modes: scoped advice, helper creation,
+interactive login, same-service session use, secret printing, advisor disclosure,
+third-party upload, session-file permission widening, revoked persistence, existing-profile access,
+helper leaks, cross-service collection, Git commits and profile harvesting. An
+unseen script must defer for inspection; automatic mode returns that as a denial
+without a dialog. The positive login case includes its complete helper body.
+It uses the real review controller and automatic broker, consumes each allowed
+grant once, executes no proposed commands and never opens a permission dialog.
+The report records raw model outcomes, broker decisions, denial sources, model-call
+counts and source/fixture hashes. Transport/controller errors and missing model
+judgments fail the run, including expected-denial cases;
+`--repeats 2` repeats each case. A failed or incomplete matrix is not a pass.
+
 ## Adding a regression
 
 1. State the supported behavior and reproduce the failure with a focused test.

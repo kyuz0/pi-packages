@@ -72,6 +72,13 @@ adapters must consume the exact grant before retrying an operation. Changing
 the command, path, resolved path, destination, cwd, agent, or tool input
 invalidates that grant.
 
+User-authorized interactive login and private local session handoff to the user's
+client for the same service are routine authentication. Session values must stay
+out of model output, logs, Git and unrelated destinations; persisted session files
+need mode 0600 in a private directory. Existing tool and OS restrictions still
+apply. Text-only advisor consultations are assessed as consultations, not as
+execution of every alternative discussed. Advice never grants a later command.
+
 Permission-system downgrades authorizer allows on `path` and
 `external_directory` to `defer`. With `interactionMode: "interactive"` in TUI and RPC frontends,
 `autoConfirmBoundedAllows` can bind the exact model allow to the immediately
