@@ -1,9 +1,10 @@
+import {createServer} from 'node:net';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, mkdir, chmod, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createHmac } from 'node:crypto';
-import { bootStamp, viewerLink, endpoint } from '../src/browser/viewer.mjs';
+import { bootStamp, viewerLink, endpoint, desktopSocket } from '../src/browser/viewer.mjs';
 
 test('viewer links are session-specific and reject stale container descriptors', async () => {
   const root = await mkdtemp(tmpdir() + '/pi-viewer-');
@@ -34,4 +35,26 @@ test('viewer accepts isolated localhost names but rejects lookalikes and externa
       else await assert.rejects(viewerLink(id, root), /Invalid browser viewer descriptor/);
     }
   } finally { await rm(root, {recursive:true,force:true}); }
+});
+
+
+test('desktop routes accept only a private owned socket in a private real profile',async()=>{
+ const root=await mkdtemp(tmpdir()+'/pi-desktop-'),id='d'.repeat(32),directory=root+'/'+id,path=directory+'/desktop.sock';
+ const server=createServer();
+ try {
+  await mkdir(directory,{mode:0o700});
+  await writeFile(path,'not a socket',{mode:0o600});
+  await assert.rejects(desktopSocket(id,root),/Invalid browser desktop socket/);
+  await rm(path);
+  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(path,resolve);});
+  await chmod(path,0o600);
+  assert.equal(await desktopSocket(id,root),path);
+  await chmod(path,0o666);await assert.rejects(desktopSocket(id,root),/Invalid browser desktop socket/);
+  await chmod(path,0o600);await chmod(directory,0o755);
+  await assert.rejects(desktopSocket(id,root),/Invalid browser profile/);
+  await chmod(directory,0o700);
+  const alias='e'.repeat(32);await symlink(directory,root+'/'+alias);
+  await assert.rejects(desktopSocket(alias,root),/Invalid browser profile/);
+  await assert.rejects(desktopSocket('../escape',root),/Invalid browser session/);
+ } finally {if(server.listening)await new Promise(resolve=>server.close(resolve));await rm(root,{recursive:true,force:true});}
 });

@@ -1,5 +1,5 @@
 /** Private container endpoint for the host's authenticated browser viewer. */
-import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, rename, lstat } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { createHmac } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
@@ -23,8 +23,21 @@ export async function viewerLink(id, root = browserRoot) {
   const token = createHmac('sha256', descriptor.key).update(id).digest('hex');
   return descriptor.origin + '/v/' + id + '/' + token + '/';
 }
-export async function endpoint(id, root = browserRoot) {
+async function privateProfile(id, root) {
   if (!validId(id)) throw new Error('Invalid browser session');
+  const directory=await lstat(root+'/'+id);
+  if(!directory.isDirectory() || directory.uid!==process.getuid() || (directory.mode&0o077)!==0)
+    throw Error('Invalid browser profile');
+}
+export async function desktopSocket(id, root = browserRoot) {
+  await privateProfile(id,root);
+  const path=root+'/'+id+'/desktop.sock',stat=await lstat(path);
+  if(!stat.isSocket() || stat.uid!==process.getuid() || (stat.mode&0o077)!==0)
+    throw Error('Invalid browser desktop socket');
+  return path;
+}
+export async function endpoint(id, root = browserRoot) {
+  await privateProfile(id,root);
   const [port, path] = (await readFile(root + '/' + id + '/DevToolsActivePort', 'utf8')).trim().split('\n');
   if (!/^\d{1,5}$/.test(port) || +port < 1 || +port > 65535 ||
       !/^\/devtools\/browser\/[a-f0-9-]+$/.test(path)) throw new Error('Invalid browser endpoint');
@@ -56,9 +69,14 @@ async function main() {
     const temporary = file + '.' + process.pid;
     await writeFile(temporary, JSON.stringify({ ...value, boot: await bootStamp() }), { mode: 0o600 });
     await rename(temporary, file);
-  } else if (process.argv[2] === 'connect' && process.argv.length === 4) {
-    const port = await endpoint(process.argv[3]);
-    const socket = createConnection({ host: '127.0.0.1', port });
+  } else if (['connect','connect-desktop'].includes(process.argv[2]) && process.argv.length === 4) {
+    const id=process.argv[3];
+    const port = await endpoint(id);
+    let address={host:'127.0.0.1',port};
+    if(process.argv[2]==='connect-desktop') {
+      address={path:await desktopSocket(id)};
+    }
+    const socket = createConnection(address);
     socket.on('error', () => process.exit(1));
     // EOF on stdin only closes the write half; Chromium can still send its response.
     process.stdin.pipe(socket);

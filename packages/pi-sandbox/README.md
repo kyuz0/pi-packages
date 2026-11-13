@@ -380,9 +380,17 @@ The container browser adapter keeps an encrypted Betterwright credential vault
 at `~/.betterwright/vault`, separate from its temporary browser profiles. Browser
 sessions share the vault; closing a session removes its profile and retains saved
 credentials. The browser API lists account metadata and fills credentials only
-on matching sites. Human logins in the headless viewer are not saved automatically
-under Betterwright’s default settings.
+on matching sites. Human logins in the native browser viewer are not saved automatically; native
+password saving is disabled. Each session uses a private display with native tabs
+and popups. A closed or crashed browser restarts on the next browser tool call.
 
 Run `test/browser-vault-check.mjs` inside a disposable Factory browser container
 to check shared storage, origin matching, file permissions, trusted filling and
 password redaction with synthetic credentials.
+
+The Factory image supplies TigerVNC, Openbox, noVNC and the WebSocket transport.
+Run `test/browser-lifecycle-check.mjs` in a disposable Factory browser container
+to check transient startup failure, queued start versus close, concurrent close
+and adapter reuse. Factory's `TESTING.md` covers rendered interaction, popup and
+tab switching, crash recovery and container-bound relay cleanup. Run browser
+integration suites sequentially within the container's process limit.
