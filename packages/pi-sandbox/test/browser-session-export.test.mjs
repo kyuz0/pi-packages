@@ -14,7 +14,7 @@ test('service URL requires HTTPS or loopback and rejects URL credentials and tok
 });
 
 test('only matching cookies become a valid header, ordered by path specificity',()=>{
-  const data=[cookie(),cookie({name:'specific',path:'/api'}),cookie({name:'parent',domain:'.example.test'}),cookie({domain:'mail.example.test'}),cookie({domain:'evil-expenses.example.test'}),cookie({domain:'.other.test'}),cookie({path:'/ap'}),cookie({path:'/api/other'}),cookie({expires:1}),cookie({partitionKey:{topLevelSite:'https://other.test'}})];
+  const data=[cookie(),cookie({name:'specific',path:'/api'}),cookie({name:'parent',domain:'.example.test'}),cookie({domain:'mail.example.test'}),cookie({domain:'evil-expenses.example.test'}),cookie({domain:'.other.test'}),cookie({path:'/ap'}),cookie({path:'/api/other'}),cookie({expires:1}),cookie({partitionKey:{topLevelSite:'https://other.test'}}),cookie({name:'opaque',partitionKeyOpaque:true})];
   assert.deepEqual(cookieHeader(data,origin,2),{header:'specific=SYNTHETIC_SESSION; session=SYNTHETIC_SESSION; parent=SYNTHETIC_SESSION',count:3});
   assert.throws(()=>cookieHeader([cookie()], 'http://127.0.0.1/api'),/No matching/);
   assert.throws(()=>cookieHeader([cookie({value:'synthetic\r\nInjected: value'})],origin),/safe Cookie/);

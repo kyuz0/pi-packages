@@ -16,7 +16,7 @@ export function cookieHeader(cookies, value, now = Date.now() / 1000) {
   const url = serviceURL(value);
   if (!Array.isArray(cookies)) throw Error('Browser session data is unavailable.');
   const selected = cookies.filter(cookie => {
-    if (!cookie || typeof cookie.domain !== 'string' || typeof cookie.path !== 'string' || cookie.partitionKey) return false;
+    if (!cookie || typeof cookie.domain !== 'string' || typeof cookie.path !== 'string' || cookie.partitionKey || cookie.partitionKeyOpaque) return false;
     const domain = cookie.domain.toLowerCase();
     const host = url.hostname.toLowerCase();
     const domainMatch = domain.startsWith('.') ? host === domain.slice(1) || host.endsWith(domain) : host === domain;
