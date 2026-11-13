@@ -3472,7 +3472,7 @@ test("automatic refusal never suggests retrying a model denial",async()=>{
  try {
   const result=await instance.authorize("bash_escalated");assert.equal(result.decision.approved,false);
   assert.equal(result.terminalCalls,0);assert.doesNotMatch(JSON.stringify(result),/Retry a failed|retry after/i);
-  assert.match(JSON.stringify(result),/Do not retry, rephrase/);
+  assert.match(JSON.stringify(result),/Do not repeat unchanged/);
  } finally {instance.dispose();}
 });
 
@@ -3544,3 +3544,26 @@ for (const mode of ["tui","rpc"]) for (const resolution of ["user_approved","aut
   }
  });
 }
+
+
+test("automatic Bash path caps describe the actual shell route", async () => {
+ const instance=harness(allow,{config:config({interactionMode:"automatic"})});
+ try {
+  const result=await instance.authorize("external_directory_read",{toolName:"bash",command:"cat /tmp/reviewed"});
+  assert.equal(result.decision.approved,false);assert.equal(result.terminalCalls,0);
+  assert.match(JSON.stringify(result),/This Bash command/);
+  assert.match(JSON.stringify(result),/bash_escalate/);
+  assert.doesNotMatch(JSON.stringify(result),/native file tool/);
+  assert.equal(instance.modelContexts.length,0);
+ } finally {instance.dispose();}
+});
+
+test("automatic deferrals request evidence without contradicting the recovery advice", async () => {
+ const instance=harness(defer,{config:config({interactionMode:"automatic"})});
+ try {
+  const result=await instance.authorize("bash_escalated");
+  assert.equal(result.decision.approved,false);assert.equal(result.terminalCalls,0);
+  assert.match(JSON.stringify(result),/Provide the missing evidence/);
+  assert.doesNotMatch(JSON.stringify(result),/Do not retry|Do not repeat/);
+ } finally {instance.dispose();}
+});

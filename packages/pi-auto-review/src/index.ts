@@ -311,7 +311,9 @@ export function createPiAutoReviewExtension(
         // broker has already enforced hard denies before reaching this hook.
         if (config.interactionMode !== "interactive" && boundedRequest(request.surface)) return {
           outcome: "deny", riskLevel: "medium", userAuthorization: "unknown",
-          rationale: "This native file tool cannot be approved in automatic mode. Use sandboxed bash for allowed files, or bash_escalate with the exact command and justification for automatic review.",
+          rationale: request.toolName === "bash"
+            ? "This Bash command accesses a path that requires human confirmation in the inner sandbox. Use bash_escalate for the exact reviewed outer-container command."
+            : "This file access requires human confirmation. Automatic mode never prompts. Use sandboxed bash for allowed files, or bash_escalate for the exact reviewed command.",
         };
         try {
           const result = await complete(
@@ -891,7 +893,9 @@ export function createPiAutoReviewExtension(
               ? " " + LOCAL_HARD_DENY_AGENT_INSTRUCTION
               : decision.kind === "deny" && decision.denialSource === "unavailable"
                 ? " The operation was not executed. Retry after resolving the review failure; no permission was granted."
-                : " The operation was not executed. Do not retry, rephrase, or circumvent this denial. Continue only with an alternative that respects the restriction or new explicit user instructions."),
+                : decision.review.outcome === "defer"
+                  ? " Not executed. Provide the missing evidence or use a permitted alternative."
+                  : " Not executed. Do not repeat unchanged; follow the stated alternative without bypassing the restriction."),
           };
           if (allowCapped || decision.kind === "defer") {
             return { kind: "defer" };
