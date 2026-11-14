@@ -1,3 +1,4 @@
+import { withReviewerSlot } from "./scheduler.ts";
 import { createHash } from "node:crypto";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { completeSimple, normalizeContext } from "@earendil-works/pi-ai/compat";
@@ -196,6 +197,7 @@ export function isRetryableError(errorClass: ReviewErrorClass): boolean {
 export function retryDelayMs(
   errorClass: ReviewErrorClass,
   metadata: ProviderAttemptMetadata,
+  attempt = 1,
 ): number {
   if (isFormatError(errorClass)) return 0;
   if (errorClass === "rate_limit" && metadata.retryAfterMs !== undefined) {
@@ -203,7 +205,7 @@ export function retryDelayMs(
       ? metadata.retryAfterMs
       : Number.POSITIVE_INFINITY;
   }
-  return REVIEWER_RETRY_DELAY_MS;
+  return errorClass === "rate_limit" ? Math.min(30_000, 2_000 * 2 ** (attempt - 1)) : REVIEWER_RETRY_DELAY_MS;
 }
 
 export function parseRetryAfterMs(headers: Readonly<Record<string, string>>): number | undefined {
@@ -602,13 +604,21 @@ export async function modelCall(
   // system message. Providers registered by extensions receive that shape, so
   // normalize before calling a registered streamSimple. completeSimple still
   // accepts a Context and normalizes internally.
-  return (runtime.streamSimple
+  const queuedAt = Date.now();
+  return withReviewerSlot(
+    JSON.stringify([runtime.model.provider, runtime.model.baseUrl]),
+    controller.signal,
+    async () => {
+      options.timeoutMs = Math.max(1, timeoutMs - (Date.now() - queuedAt));
+      return (runtime.streamSimple
     ? await runtime.streamSimple(
         runtime.model,
         normalizeContext(context),
         options,
       ).result()
     : await completeSimple(runtime.model, context, options)) as CompletionMessage;
+    },
+  );
 }
 
 export type ReviewerResolver = (

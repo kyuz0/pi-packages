@@ -248,6 +248,11 @@ async function performRegistration(
   const additionalWriteRoots = config.filesystem.additionalWriteRoots;
   const protectCommonCredentialFiles = config.filesystem.protectCommonCredentialFiles;
   const network = config.network;
+  const currentNetwork = (cwd: string) => {
+    const fresh = loadPiSandboxConfig({cwd}).network;
+    validatePiSandboxConfig({network:fresh,hostIPC});
+    return fresh;
+  };
   const subagents =
     subagentProvider === "builtin"
       ? (options.subagentManager ??
@@ -273,7 +278,7 @@ async function performRegistration(
           additionalAllowRead,
           additionalWriteRoots,
           protectCommonCredentialFiles,
-          network,
+          currentNetwork(ctx.cwd),
           hostIPC,
           options.sandbox,
         ),
@@ -530,7 +535,7 @@ async function performRegistration(
       additionalAllowRead,
       additionalWriteRoots,
       protectCommonCredentialFiles,
-      network,
+      currentNetwork(ctx.cwd),
       hostIPC,
       options.sandbox,
     ),

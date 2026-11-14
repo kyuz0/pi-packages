@@ -44,7 +44,7 @@ test("parallel review forks committed history and cannot publish over the trunk"
  const f=fixture();await f.run();let release!:()=>void;let entered!:()=>void;
  const gate=new Promise<void>(r=>{release=r;}),ready=new Promise<void>(r=>{entered=r;});
  let call=0;f.setNext(async()=>{if(call++===0){entered();await gate;}return response();});
- const a=f.run();await ready;const b=await f.run();assert.equal(b.summary.conversation?.mode,"fork");assert.equal(b.summary.conversation?.committed,false);release();assert.equal((await a).summary.conversation?.committed,true);
+ const a=f.run();await ready;const pending=f.run();await new Promise(r=>setTimeout(r,20));release();const b=await pending;assert.equal(b.summary.conversation?.mode,"fork");assert.equal(b.summary.conversation?.committed,false);assert.equal((await a).summary.conversation?.committed,true);
 });
 test("normal parent compaction with original branch retained does not reset the reviewer",async()=>{
  const f=fixture();await f.run();f.ctx.sessionManager.buildContextEntries=()=>[];f.add("Continue without publishing");const r=await f.run();assert.equal(r.summary.conversation?.mode,"reused");assert.match(JSON.stringify(f.seen.at(-1)),/Do not publish until I ask/);
@@ -156,4 +156,13 @@ test("a changed question answer invalidates an in-flight allow",async()=>{
  f.setNext(async()=>{answer.message.details.answers[0]!.answer="No";return response();});
  const r=await f.run({trustedQuestionTools:["ask_user_question"]});
  assert.equal(r.decision.outcome,"defer");assert.equal(r.summary.conversation?.committed,false);
+});
+
+
+test("real controller serializes simultaneous network reviews for a single-slot model",async()=>{
+ const f=fixture();let active=0,peak=0;
+ f.setNext(async()=>{active++;peak=Math.max(peak,active);await new Promise(r=>setTimeout(r,5));active--;return response();});
+ const results=await Promise.all(Array.from({length:12},()=>f.run()));
+ assert.equal(peak,1);assert.equal(f.seen.length,12);
+ for(const result of results){assert.equal(result.decision.outcome,"allow");assert.equal(result.summary.controllerFailure,undefined);}
 });

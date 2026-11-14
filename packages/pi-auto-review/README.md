@@ -238,17 +238,24 @@ extend retention.
 not an expected response time. It covers model resolution, authentication and
 the model response. Provider-internal retries are disabled.
 
-The default conversation mode makes at most two model calls per approval. Each action
+The default retry budget allows up to three model calls per approval. Each action
 includes the selected original user instructions and answers; approval within
 their scope does not need to be repeated in a new chat message. Invalid
 output, unexpected tool calls, cancellation and provider failures never grant
 permission and do not commit a turn to reviewer history.
 
-Both conversation and independent modes can retry once for malformed output
-or recognized transient connection, 5xx and 429 errors within the same deadline.
+Both conversation and independent modes can retry once for malformed output,
+and up to `retries` times for transient connection, 5xx and 429 errors within
+the same deadline.
 Valid decisions, output exhaustion, timeouts and authentication errors are never
 retried. Set `retries: 0` to disable retries. A provider context rejection with
 reused history can retry from the same current evidence without older reviews.
+
+Concurrent reviews within one Pi process queue per provider endpoint instead of
+sending an inference burst. Each keeps its own evidence and decision; cancellation
+and the review deadline also cover queue time. Rate-limit retries honor
+`Retry-After`, or wait two seconds and then four seconds with the default two
+retries. Exhausted retries report a concise failure reason to the agent.
 
 ## Operator feedback and exact retry
 

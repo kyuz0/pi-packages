@@ -1,3 +1,4 @@
+import { reviewerFailure } from "./broker/reviewer-failure.ts";
 import { randomBytes } from "node:crypto";
 
 import type {
@@ -325,7 +326,7 @@ export function createPiAutoReviewExtension(
             emitTelemetry,
           );
           if (result.summary.controllerFailure) {
-            const errorClass = result.summary.attempts.at(-1)?.errorClass ?? "unknown";
+            const errorClass = result.summary.controllerErrorClass ?? result.summary.attempts.at(-1)?.errorClass ?? "unknown";
             throw new ReviewExecutionError(errorClass === "none" ? "unknown" : errorClass, result.summary);
           }
           if (request.source === "permission-system") {
@@ -351,7 +352,7 @@ export function createPiAutoReviewExtension(
                 outcome: config.failureMode,
                 risk_level: "high",
                 user_authorization: "unknown",
-                rationale: "Automatic review is unavailable.",
+                rationale: reviewerFailure(execution).reason,
               },
               attempts: execution.summary.attempts.length,
               retryErrors: execution.summary.attempts

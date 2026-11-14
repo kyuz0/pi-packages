@@ -1,3 +1,4 @@
+import { reviewerFailure } from "../broker/reviewer-failure.ts";
 import type { AssistantMessage, Context, Message } from "@earendil-works/pi-ai/compat";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { BoundaryRequest } from "../broker/index.ts";
@@ -18,17 +19,18 @@ export async function completeConversation(o: Options): Promise<ReviewResult> {
   const summary: ReviewExecutionSummary = { attempts: [], errorCounts: {}, durationMs: 0, transcript, preflight };
   const retryErrors: ReviewErrorClass[] = [];
   let lease: ReturnType<typeof reviewerConversations.acquire> | undefined;
-  const finish = (outcome: "allow" | "deny" | "defer", rationale: string, decision?: ReviewResult["decision"]): ReviewResult => {
+  const finish = (outcome: "allow" | "deny" | "defer", rationale: string, decision?: ReviewResult["decision"], errorClass?: ReviewErrorClass): ReviewResult => {
     summary.durationMs = Date.now() - started;
     if (!decision) {
       summary.controllerFailure = rationale;
+      summary.controllerErrorClass = errorClass ?? summary.attempts.at(-1)?.errorClass ?? "unknown";
       // Failed provider/controller state must not leave the next review bound
       // to the same rejected history. Forks cannot invalidate another owner.
       lease?.invalidate();
     }
     return { decision: decision ?? { outcome, risk_level: "high", user_authorization: "unknown", rationale }, attempts: summary.attempts.length, retryErrors, durationMs: summary.durationMs, transcript, summary };
   };
-  if (transcript.failureCode) return finish("defer", "Required action evidence exceeds the input budget. Reduce the request or expanded context before retrying.");
+  if (transcript.failureCode) return finish("defer", "Required action evidence exceeds the input budget. Reduce the request or expanded context before retrying.", undefined, transcript.failureCode);
   const controller = new AbortController();
   const sessionSignal = ctx.signal;
   let timedOut = false;
@@ -65,7 +67,7 @@ export async function completeConversation(o: Options): Promise<ReviewResult> {
       });
     } catch { reset("invalid-history"); }
     const retained = transcript.retainedContext;
-    if (!retained) return finish("defer", "Original user instructions are unavailable for review.");
+    if (!retained) return finish("defer", "Original user instructions are unavailable for review.", undefined, "missing_instructions");
     const evidenceKeys = retained.messages.map(m => digest([m.id, m.role, m.content]));
     const action = conversationAction(o.sharedContext);
     let turn: Message = { role: "user", content: JSON.stringify(action), timestamp: Date.now() };
@@ -77,12 +79,13 @@ export async function completeConversation(o: Options): Promise<ReviewResult> {
       action.reviewerHistoryReset = true;
       turn = { role: "user", content: JSON.stringify(action), timestamp: Date.now() };
     }
-    const maxAttempts = Math.min(config.retries + 1, 2);
+    const maxAttempts = config.retries + 1;
+    let formatRetried = false;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      if (controller.signal.aborted) return finish("defer", "Reviewer cancelled or its deadline expired. No action was executed.");
-      if (parentChanged()) return finish("defer", "The parent conversation changed during review; review again with current instructions.");
+      if (controller.signal.aborted) return finish("defer", "Reviewer cancelled or its deadline expired. No action was executed.", undefined, timedOut ? "timeout" : "abort");
+      if (parentChanged()) return finish("defer", "The parent conversation changed during review; review again with current instructions.", undefined, "parent_changed");
       const requestMessages = [...messages!, turn];
-      if (!fits(requestMessages)) return finish("defer", "Required reviewer evidence exceeds the input budget even without review history. Reduce the request or expanded context before retrying.");
+      if (!fits(requestMessages)) return finish("defer", "Required reviewer evidence exceeds the input budget even without review history. Reduce the request or expanded context before retrying.", undefined, "reviewer_input_budget_exceeded");
       const roundStarted = Date.now();
       const metadata: ProviderAttemptMetadata = {};
       let response: AssistantMessage | undefined, caught: unknown;
@@ -95,7 +98,7 @@ export async function completeConversation(o: Options): Promise<ReviewResult> {
         : response?.stopReason === "length" ? "output_limit"
         : response?.stopReason === "stop" ? "none" : classifyProviderFailure(response, caught, metadata);
       let status: ReviewAttemptStatus = caught ? "transport_failure" : errorClass === "none" ? "success" : "non_stop";
-      let reason = response ? `Reviewer stopped with ${response.stopReason} (${errorClass}); output budget ${config.maxTokens} tokens. No action was executed.` : `Reviewer unavailable (${errorClass}); no action was executed.`;
+      let reason = reviewerFailure({errorClass}).reason;
       if (response && (response.stopReason === "stop" || response.stopReason === "toolUse")) {
         if (response.content.some(p => p.type === "toolCall")) {
           errorClass = "provider_stop"; reason = "Reviewer requested an unavailable tool.";
@@ -114,9 +117,9 @@ export async function completeConversation(o: Options): Promise<ReviewResult> {
         if (parentChanged()) {
           lease.invalidate();
           if (decision.outcome === "deny") return finish("deny", decision.rationale, decision);
-          return finish("defer", "The parent conversation changed during review; review again with current instructions.");
+          return finish("defer", "The parent conversation changed during review; review again with current instructions.", undefined, "parent_changed");
         }
-        if (controller.signal.aborted) return finish("defer", "Reviewer cancelled before completion.");
+        if (controller.signal.aborted) return finish("defer", "Reviewer cancelled before completion.", undefined, "abort");
         messages = [...requestMessages, { ...response!, content: response!.content.filter(p => p.type !== "thinking") }];
         for (const k of evidenceKeys) admitted.add(k);
         summary.conversation.committed = lease.commit(messages, admitted);
@@ -134,9 +137,10 @@ export async function completeConversation(o: Options): Promise<ReviewResult> {
       } else if (retry && isFormatError(errorClass)) {
         action.formatCorrection = FORMAT_RETRY_INSTRUCTION;
         turn = { role: "user", content: JSON.stringify(action), timestamp: Date.now() };
-        retry = fits([...messages!, turn]);
+        retry = !formatRetried && fits([...messages!, turn]);
+        formatRetried = true;
       } else if (retry) {
-        delay = retryDelayMs(errorClass, metadata);
+        delay = retryDelayMs(errorClass, metadata, attempt);
         retry = Number.isFinite(delay) && Date.now() + delay < deadline;
       }
       observation.willRetry = retry;
@@ -148,6 +152,6 @@ export async function completeConversation(o: Options): Promise<ReviewResult> {
   } catch (error) {
     const kind = controller.signal.aborted ? timedOut ? "timeout" : "abort" : classifyProviderFailure(undefined, error, {});
     if (kind !== "none") summary.errorCounts[kind] = (summary.errorCounts[kind] ?? 0) + 1;
-    return finish("defer", controller.signal.aborted ? "Reviewer cancelled or its deadline expired." : `Reviewer unavailable (${kind}); no automatic permission granted.`);
+    return finish("defer", reviewerFailure({errorClass:kind}).reason, undefined, kind);
   } finally { clearTimeout(timer); sessionSignal?.removeEventListener("abort", abort); lease?.release(); }
 }

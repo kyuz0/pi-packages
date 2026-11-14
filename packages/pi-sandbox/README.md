@@ -409,3 +409,15 @@ to check transient startup failure, queued start versus close, concurrent close
 and adapter reuse. Factory's `TESTING.md` covers rendered interaction, popup and
 tab switching, crash recovery and container-bound relay cleanup. Run browser
 integration suites sequentially within the container's process limit.
+
+## Factory browser development
+
+Start a local development server with `bash_escalate` or the editor terminal,
+then navigate the managed browser to `http://localhost:PORT`. Ordinary sandboxed
+Bash uses a separate network namespace. Browser loopback requests stay inside
+the development container; external requests retain the configured proxy policy.
+HTTP, HTTPS tunnels, WebSockets and popup tabs use the same routing. Internal
+proxy and browser-control listeners are reserved.
+
+Factory additionally grants shared container `/tmp` scratch access. Private
+command temporary directories and approval IPC live outside that shared tree.

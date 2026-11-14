@@ -186,7 +186,8 @@ export async function complete(
     let lastError: unknown;
     let lastErrorClass: ReviewErrorClass = "unknown";
     const retryErrors: ReviewErrorClass[] = [];
-    const maxAttempts = Math.min(config.retries + 1, 2);
+    const maxAttempts = config.retries + 1;
+    let formatRetried = false;
     const formatRetryFitsBudget =
       preflight.total.estimatedTokens +
         preflightPart(`\n\n${FORMAT_RETRY_INSTRUCTION}`).estimatedTokens <=
@@ -291,11 +292,11 @@ export async function complete(
         }
       }
       const usage = observedUsage(message);
-      const delayMs = retryDelayMs(errorClass, providerMetadata);
+      const delayMs = retryDelayMs(errorClass, providerMetadata, attempt);
       const willRetry =
         !decision &&
         isRetryableError(errorClass) &&
-        (!isFormatError(errorClass) || formatRetryFitsBudget) &&
+        (!isFormatError(errorClass) || (!formatRetried && formatRetryFitsBudget)) &&
         attempt < maxAttempts &&
         !controller.signal.aborted &&
         deadlineAt - Date.now() > delayMs;
@@ -333,6 +334,7 @@ export async function complete(
       if (controller.signal.aborted) break;
       if (!willRetry) break;
       formatRetry = isFormatError(errorClass);
+      if (formatRetry) formatRetried = true;
       try {
         await abortableDelay(delayMs, controller.signal);
       } catch {

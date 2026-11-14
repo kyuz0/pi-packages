@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { completeConversation } from "../src/review/conversation.ts";
+import {reviewerFailure} from "../src/broker/reviewer-failure.ts";
 import { complete } from "../src/review/complete.ts";
 import { DEFAULT_CONFIG } from "../src/review/config.ts";
 import { preflightPart } from "../src/review/input.ts";
@@ -212,7 +214,7 @@ test("failed owner and successful concurrent fork cannot leave reusable poisoned
  let calls=0;f.setNext(async()=>{if(calls++===0){enter();await gate;throw Error("offline");}return verdict();});
  const owner=f.run({retries:0});await entered;
  let fork;
- try { fork=await f.run({retries:0}); } finally { release(); }
+ try { const pending=f.run({retries:0}); await new Promise(r=>setTimeout(r,10)); release(); fork=await pending; } finally { release(); }
  assert.equal(fork.decision.outcome,"allow");assert.equal(fork.summary.conversation?.committed,false);
  assert.equal((await owner).decision.outcome,"defer");
  f.setNext(async()=>verdict());assert.equal((await f.run({retries:0})).decision.outcome,"allow");
@@ -241,4 +243,23 @@ test("cleanup uses the captured signal when the host invalidates context getters
  const result=await f.run();assert.equal(result.decision.outcome,"allow");
  invalid=false;f.setNext(async()=>verdict());assert.equal((await f.run()).decision.outcome,"allow");
  assert.equal(f.seen.at(-1)!.messages.filter(m=>m.role!=="system").length,3);
+});
+
+test("two busy responses recover on the configured third attempt in both review modes",async()=>{
+ for(const reviewerConversation of [false,true]) {
+  const f=fixture('busy-'+reviewerConversation);let calls=0;
+  f.setNext(async()=>{calls++;if(calls<3)throw Object.assign(new Error('provider busy'),{status:429});return verdict();});
+  const started=Date.now();
+  const result=await f.run({reviewerConversation,retries:2,timeoutMs:30000});
+  assert.equal(result.decision.outcome,'allow');assert.equal(calls,3);
+  assert(Date.now()-started>=5900,'Rate-limit retries ignored exponential backoff');
+ }
+});
+
+test("conversation controller budget failures preserve a specific actionable class",async()=>{
+ const f=fixture('budget-class'),base=await f.run();
+ const result=await completeConversation({ctx:f.ctx,config:DEFAULT_CONFIG,request:{id:'budget',source:'sandbox-runtime',surface:'network',operation:'connect',cwd:'/workspace'},transcript:{...base.transcript,failureCode:'critical_evidence_overflow'},preflight:base.summary.preflight,sharedContext:'',started:Date.now(),resolve:async()=>{throw Error('Must not call model');}});
+ assert.equal(result.summary.controllerErrorClass,'critical_evidence_overflow');
+ assert.match(reviewerFailure({errorClass:result.summary.controllerErrorClass}).reason,/input limit.*Reduce/);
+ assert.equal(result.attempts,0);
 });

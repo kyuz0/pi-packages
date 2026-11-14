@@ -255,6 +255,7 @@ export function createDefaultPolicy(
       ],
       allowWrite: [...writeRoots, "/dev/null"],
       denyWrite: [
+        ...(process.env.PI_SANDBOX_CONTAINER === "1" ? ["/tmp/.X11-unix"] : []),
         ...writeRoots.flatMap(root => [
           join(root, ".pi", "pi-auto-review.json"),
           join(root, PROJECT_PI_SANDBOX_CONFIG_PATH),
@@ -298,7 +299,8 @@ export function toSandboxRuntimeConfig(
       denyRead: [...policy.filesystem.denyRead],
       allowRead: [...policy.filesystem.allowRead],
       allowWrite: [...policy.filesystem.allowWrite],
-      denyWrite: [...policy.filesystem.denyWrite],
+      denyWrite: [
+        ...(process.env.PI_SANDBOX_CONTAINER === "1" ? ["/tmp/.X11-unix"] : []),...policy.filesystem.denyWrite],
       // pi-sandbox historically allowed commands such as `git remote set-url`.
       // Sandbox Runtime continues to protect hooks independently.
       allowGitConfig: true,

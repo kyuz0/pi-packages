@@ -1,3 +1,4 @@
+import { reviewerFailure } from "./reviewer-failure.ts";
 import { DenialCircuitBreaker } from "./circuit-breaker.ts";
 import { OneShotGrantStore } from "./grants.ts";
 import { RecentDenialStore } from "./overrides.ts";
@@ -163,11 +164,9 @@ export class BoundaryApprovalBroker {
     let review: BoundaryReview;
     try {
       review = await this.#reviewer(request, { userOverride });
-    } catch {
-      const reason = "Automatic review is unavailable.";
-      this.audit("review_failure", request, {
-        errorClass: "reviewer_unavailable",
-      });
+    } catch (error) {
+      const { reason, errorClass } = reviewerFailure(error);
+      this.audit("review_failure", request, { errorClass });
       if (!this.#humanFallback) return this.unavailable(reason);
       if (this.#failureMode === "defer") {
         this.#breaker.record(context.scopeKey, false);

@@ -98,6 +98,8 @@ export type ReviewErrorClass =
   | "critical_evidence_overflow"
   | "required_profile_overflow"
   | "reviewer_input_budget_exceeded"
+  | "parent_changed"
+  | "missing_instructions"
   | "unknown";
 
 export type ReviewAttemptObservation = {
@@ -131,6 +133,7 @@ export type ReviewPreflight = {
 export type ReviewExecutionSummary = {
   /** Controller failure, distinct from a valid model decision to defer. */
   controllerFailure?: string;
+  controllerErrorClass?: ReviewErrorClass;
   conversation?: { mode: "independent" | "fresh" | "reused" | "fork" | "reset"; rounds: number; investigations: number; committed: boolean; historyMessages: number; resetReason?: "capacity" | "provider-rejection" | "invalid-history" };
   attempts: ReviewAttemptObservation[];
   errorCounts: Partial<Record<Exclude<ReviewErrorClass, "none">, number>>;

@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { randomBytes } from 'node:crypto';
 import { browserRoot, viewerLink } from './viewer.mjs';
+import { startBrowserProxy } from './network.mjs';
 import { startDesktop } from './desktop.mjs';
 import {collectSessionCookies, saveSessionFile, serviceURL} from './session-export.mjs';
 import { BetterWright, createLocalCredentialVault } from 'betterwright';
@@ -21,6 +22,7 @@ export class SandboxBrowser {
   #process;
   #profile;
   #desktop;
+  #proxy;
   #recovering;
   #recoveryError;
   #closing=false;
@@ -48,9 +50,8 @@ export class SandboxBrowser {
         '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
         '--disable-component-update', '--remote-debugging-address=127.0.0.1',
         '--remote-debugging-port=0', '--user-data-dir=' + this.#profile];
-      if (process.env.SANDBOX_NETWORK_MODE !== 'unrestricted') {
-        args.push('--proxy-server=http://127.0.0.1:3128', '--proxy-bypass-list=<-loopback>');
-      }
+      this.#proxy = await startBrowserProxy({upstream:process.env.SANDBOX_NETWORK_MODE === 'unrestricted' ? null : undefined});
+      args.push('--proxy-server=http://127.0.0.1:' + this.#proxy.port, '--proxy-bypass-list=<-loopback>');
       this.#process = spawn('setpriv',
         ['--pdeathsig', 'KILL', '--', '/opt/betterwright/chromium', ...args, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'], env: this.#desktop.env });
       process.once('exit', this.#onExit);
@@ -72,6 +73,7 @@ export class SandboxBrowser {
           if (match) finish(null, match[1]);
         });
       });
+      this.#proxy.reserve(Number(new URL(endpoint).port));
       this.#endpoint = endpoint;
       // Continue draining Chromium diagnostics after its readiness message.
       this.#process.stderr.resume();
@@ -148,6 +150,7 @@ export class SandboxBrowser {
   }
 
   async #cleanup(dispose=true) {
+    await this.#proxy?.close(); this.#proxy = undefined;
     process.off('exit', this.#onExit);
     const child = this.#process;
     this.#process = undefined;
