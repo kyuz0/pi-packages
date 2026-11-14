@@ -45,3 +45,24 @@ test('unrestricted routing keeps reserved listeners private through local addres
  try{for(const host of ['0.0.0.0','[::]','[::ffff:127.0.0.1]','localhost'])assert.equal((await request(proxy.port,`http://${host}:19431/`)).status,403);}
  finally{await proxy.close();}
 });
+
+
+test('a local application may remain silent longer than two minutes', {timeout:180000}, async()=>{
+ let timer;
+ const local=http.createServer((_req,res)=>{timer=setTimeout(()=>res.end('long operation complete'),125000);});
+ const port=await listen(local),proxy=await startBrowserProxy({upstream:null});
+ try{assert.deepEqual(await request(proxy.port,`http://127.0.0.1:${port}/slow`),{status:200,body:'long operation complete'});}
+ finally{clearTimeout(timer);await proxy.close();local.closeAllConnections();local.close();}
+});
+
+test('cancelling a browser request closes the pending local application request',async()=>{
+ let arrived;
+ const started=new Promise(resolve=>arrived=resolve);
+ const local=http.createServer((_req,res)=>arrived(res));
+ const port=await listen(local),proxy=await startBrowserProxy({upstream:null});
+ const req=http.get({host:'127.0.0.1',port:proxy.port,path:`http://127.0.0.1:${port}/slow`});
+ req.on('error',()=>{});
+ try{
+  const response=await started,closed=once(response,'close');req.destroy();await closed;
+ }finally{req.destroy();await proxy.close();local.closeAllConnections();local.close();}
+});

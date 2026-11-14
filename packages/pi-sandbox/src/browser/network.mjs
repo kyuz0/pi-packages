@@ -11,7 +11,10 @@ export function isLoopback(host) {
 export async function startBrowserProxy({upstream = {host:'127.0.0.1',port:3128}} = {}) {
   const reserved = new Set([3128,19431]);
   const sockets = new Set();
-  const track = socket => { sockets.add(socket); socket.once('close',()=>sockets.delete(socket)); return socket; };
+  const track = socket => {
+    if (!sockets.has(socket)) { sockets.add(socket); socket.once('close',()=>sockets.delete(socket)); }
+    return socket;
+  };
   const target = async (value,connect=false) => {
     const url = new URL(connect ? 'https://' + value : value);
     if (url.username || url.password || !['http:','https:','ws:','wss:'].includes(url.protocol)) throw Error('Invalid URL');
@@ -39,10 +42,10 @@ export async function startBrowserProxy({upstream = {host:'127.0.0.1',port:3128}
       method:req.method,path:proxy?req.url:t.url.pathname+t.url.search,headers},response=>{
       res.writeHead(response.statusCode,response.headers);response.pipe(res);
     });
-    outgoing.on('socket',track);
+    outgoing.on('socket',socket=>{track(socket);socket.setKeepAlive(true,30000);});
     outgoing.on('error',()=>{if(!res.headersSent)res.writeHead(502);res.end();});
     req.on('aborted',()=>outgoing.destroy());res.on('close',()=>outgoing.destroy());
-    outgoing.setTimeout(120000,()=>outgoing.destroy());req.pipe(outgoing);
+    req.pipe(outgoing);
   });
   async function tunnel(req,client,head,connect) {
     let t;
@@ -63,6 +66,8 @@ export async function startBrowserProxy({upstream = {host:'127.0.0.1',port:3128}
       remote.pipe(client);client.pipe(remote);
     });
   }
+  // Development uploads and silent responses follow the browser's cancellation.
+  server.requestTimeout=0;
   server.on('connect',(req,socket,head)=>tunnel(req,socket,head,true));
   server.on('upgrade',(req,socket,head)=>tunnel(req,socket,head,false));
   server.on('connection',socket=>{track(socket);socket.on('error',()=>{});});
