@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_CONFIG } from "../src/review/config.ts";
-import { resolveReviewerMeta } from "../src/review/provider.ts";
-import type { ReviewerMeta } from "../src/review/types.ts";
+import { modelCall, resolveReviewerMeta } from "../src/review/provider.ts";
+import type { ReasoningLevel, ReviewerMeta } from "../src/review/types.ts";
 
 function model(provider: string, id: string): ReviewerMeta["model"] {
   return {
@@ -100,4 +100,52 @@ test("provider/current still refers to an explicit model ID", async () => {
   });
   assert.equal(resolved.model.provider, "reviewer");
   assert.equal(resolved.model.id, "current");
+});
+
+test("review calls use the resolved model's supported reasoning levels", async () => {
+  const instance = harness();
+  const restricted = {
+    ...model("session", "restricted"),
+    reasoning: true,
+    thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", max: "max" },
+  } satisfies ReviewerMeta["model"];
+  const standard = { ...model("session", "standard"), reasoning: true };
+  const offOnly = {
+    ...standard,
+    thinkingLevelMap: { minimal: null, low: null, medium: null, high: null },
+  } satisfies ReviewerMeta["model"];
+  const cases: Array<{
+    selected: ReviewerMeta["model"];
+    configured: ReasoningLevel;
+    expected: ReasoningLevel | undefined;
+  }> = [
+    { selected: restricted, configured: "low", expected: "high" },
+    { selected: restricted, configured: "max", expected: "max" },
+    { selected: restricted, configured: "off", expected: undefined },
+    { selected: standard, configured: "low", expected: "low" },
+    { selected: standard, configured: "max", expected: "minimal" },
+    { selected: offOnly, configured: "low", expected: undefined },
+    { selected: instance.dedicated, configured: "low", expected: undefined },
+  ];
+  for (const { selected, configured, expected } of cases) {
+    instance.setModel(selected);
+    const config = { ...DEFAULT_CONFIG, model: "current", reasoning: configured };
+    const meta = await resolveReviewerMeta(instance.ctx, config);
+    const streamSimple: NonNullable<ReviewerMeta["streamSimple"]> =
+      (actual, _context, options) => {
+        assert.equal(actual, selected);
+        assert.equal(options?.reasoning, expected, `${selected.id} with ${configured}`);
+        throw new Error("fixture request captured");
+      };
+    await assert.rejects(modelCall(
+      { ...meta, streamSimple, auth: {}, sessionId: "test" },
+      config,
+      new AbortController(),
+      "Review this fixture.",
+      config.maxTokens,
+      config.timeoutMs,
+      false,
+      {},
+    ), /fixture request captured/);
+  }
 });

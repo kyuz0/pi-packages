@@ -161,6 +161,11 @@ models during a session affects subsequent approval reviews. Retries within
 one review use the same selected model. Reviewer reasoning, token limits, and
 timeouts still come from this extension's configuration.
 
+Set `"reasoning": "off"` to request a review without thinking. If the selected
+model lacks the configured thinking level, the reviewer uses the lowest enabled
+level in Pi's model configuration. It sends no thinking effort for a model
+without enabled levels.
+
 The reviewer makes a separate provider request without tools and uses Pi's
 authentication resolution. If no session model is selected, authentication
 fails, or the provider cannot serve this auxiliary request, the existing

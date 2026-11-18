@@ -1,6 +1,7 @@
 import { withReviewerSlot } from "./scheduler.ts";
 import { createHash } from "node:crypto";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { completeSimple, normalizeContext } from "@earendil-works/pi-ai/compat";
 import type { Context } from "@earendil-works/pi-ai/compat";
 import type { BoundaryRequest } from "../broker/index.ts";
@@ -576,6 +577,8 @@ export async function modelCall(
       },
     ],
   };
+  const enabledLevels = getSupportedThinkingLevels(runtime.model).filter(level => level !== "off");
+  const reasoning = enabledLevels.find(level => level === config.reasoning) ?? enabledLevels[0];
   const options = {
     apiKey: runtime.auth.apiKey,
     headers: runtime.auth.headers,
@@ -583,7 +586,7 @@ export async function modelCall(
     signal: controller.signal,
     maxTokens,
     maxRetries: 0,
-    reasoning: config.reasoning === "off" ? undefined : config.reasoning,
+    reasoning: config.reasoning === "off" ? undefined : reasoning,
     cacheRetention: "short" as const,
     // A permission review is a complete independent request. In particular,
     // do not let Codex WebSocket continuation attach a prior review response
