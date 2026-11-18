@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_CONFIG } from "../src/review/config.ts";
 import { modelCall, resolveReviewerMeta } from "../src/review/provider.ts";
 import type { ReasoningLevel, ReviewerMeta } from "../src/review/types.ts";
+import { registerReviewerSettings } from "../src/review/settings-command.ts";
 
 function model(provider: string, id: string): ReviewerMeta["model"] {
   return {
@@ -148,4 +149,54 @@ test("review calls use the resolved model's supported reasoning levels", async (
       {},
     ), /fixture request captured/);
   }
+});
+
+test("reviewer settings change the selected reviewer and expose only its enabled effort levels", async () => {
+  const instance = harness();
+  instance.setModel({
+    ...model("session", "restricted"), reasoning: true,
+    thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", max: "max" },
+  });
+  let config = { ...DEFAULT_CONFIG, model: "current" };
+  let command: Parameters<ExtensionAPI["registerCommand"]>[1] | undefined;
+  const pi = { registerCommand(name: string, definition: typeof command) {
+    assert.equal(name, "auto-review-settings");
+    command = definition;
+  } } as unknown as ExtensionAPI;
+  registerReviewerSettings(pi, () => config, settings => { config = { ...config, ...settings }; });
+  assert(command);
+
+  const selections = ["Thinking effort", "Off", "Reviewer model", "reviewer/review-model", "Thinking effort"];
+  const prompts: Array<{ title: string; choices: string[] }> = [];
+  let idle = true;
+  const ctx = {
+    model: instance.ctx.model,
+    modelRegistry: instance.ctx.modelRegistry,
+    hasUI: true,
+    isIdle: () => idle,
+    ui: {
+      select: async (title: string, choices: string[]) => {
+        prompts.push({ title, choices });
+        return selections.shift();
+      },
+      notify: () => {},
+    },
+  } as unknown as ExtensionCommandContext;
+
+  await command.handler("", ctx);
+  assert.match(prompts[0]!.title, /High \(Low requested\)/);
+  assert.deepEqual(prompts[1]!.choices, ["Off", "High", "Max"]);
+  assert.equal(config.reasoning, "off");
+
+  await command.handler("", ctx);
+  assert.equal(config.model, "reviewer/review-model");
+  assert.equal(config.reasoning, "off");
+  await command.handler("", ctx);
+  assert.deepEqual(prompts.at(-1)!.choices, ["Off"]);
+  assert.equal(config.reasoning, "off");
+
+  idle = false;
+  const opened = prompts.length;
+  await command.handler("", ctx);
+  assert.equal(prompts.length, opened);
 });

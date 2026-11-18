@@ -90,6 +90,8 @@ import {
 } from "./review/index.ts";
 import { ReviewExecutionError } from "./review/index.ts";
 import { DEFAULT_CONFIG } from "./review/config.ts";
+import { registerReviewerSettings } from "./review/settings-command.ts";
+import { notifyApprovalMode } from "./approval-mode.ts";
 
 export {
   applyProjectConfig,
@@ -267,6 +269,10 @@ export function createPiAutoReviewExtension(
 
   const runPolicyAuditReport = async (args: PolicyAuditArguments) =>
     policyAudit.report(args);
+
+  registerReviewerSettings(pi, () => context ? config : undefined, settings => {
+    config = Object.freeze({ ...config, ...settings });
+  });
 
   pi.registerCommand("auto-review-policy-audit", {
     description: "Show a persistent, redacted permission-policy audit report",
@@ -660,7 +666,7 @@ export function createPiAutoReviewExtension(
     },
   });
 
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("session_start", (event, ctx) => {
     shuttingDown = false;
     activeSessionId = ctx.sessionManager.getSessionId();
     registrationEpoch++;
@@ -696,7 +702,9 @@ export function createPiAutoReviewExtension(
         type: "error",
         message,
       });
+      return;
     }
+    notifyApprovalMode(event, ctx, config.interactionMode === "interactive" ? "assisted" : "automatic");
   });
 
   pi.on("agent_settled", (event) => {

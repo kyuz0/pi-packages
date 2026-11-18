@@ -166,6 +166,11 @@ model lacks the configured thinking level, the reviewer uses the lowest enabled
 level in Pi's model configuration. It sends no thinking effort for a model
 without enabled levels.
 
+Pi and Pendant show the active approval mode when you open a chat. Use
+`/auto-review-settings` to choose the reviewer model or thinking effort for that
+chat. The selector shows the effective effort and offers the selected model's
+available levels. A reload or new chat restores the trusted configuration.
+
 The reviewer makes a separate provider request without tools and uses Pi's
 authentication resolution. If no session model is selected, authentication
 fails, or the provider cannot serve this auxiliary request, the existing
@@ -219,10 +224,18 @@ Package defaults:
 }
 ```
 
-`interactionMode: "automatic"` is the default: failures return to the agent.
-In `interactive` mode, `failureMode: "deny"` blocks failures while `"defer"`
-passes them to the human terminal. Set `autoConfirmBoundedAllows` to `[]`
-to keep every bounded allow manual in that mode.
+- **Automatic (non-interactive)** is the default, configured with
+  `interactionMode: "automatic"`. When a review blocks an action, the agent gets
+  the reason and can choose another permitted approach.
+- **Automatic (interactive)** uses `interactionMode: "interactive"`. The
+  reviewer asks you when it leaves a decision open. An explicit denial still
+  blocks the action. The default `failureMode: "deny"` also blocks provider and
+  review failures. Set `failureMode: "defer"` to let a human handle those failures.
+  Set `autoConfirmBoundedAllows` to `[]` to keep every bounded allow manual.
+
+Factory also offers **Manual (ask me)** and **No approval prompts (YOLO)**.
+These modes use the sandbox's permission policy without an AI reviewer. The
+reviewer command controls only the model and thinking effort.
 
 Project configuration may only lower timeouts, token/evidence limits, retries,
 and grant TTL, set `failureMode` to `"deny"`, set `breakGlassEnabled` to
@@ -613,7 +626,7 @@ subagent boundaries. No represented operation is executed; the main-agent
 request is aborted after the samples finish. `--no-builtin-tools` ensures Bash
 comes from `pi-sandbox` rather than Pi's built-in implementation.
 
-## Automatic approval without dialogs
+## Automatic (non-interactive)
 
 The default `interactionMode: "automatic"` returns review failures and rejections
 to the agent as blocked operations with a reason. It never hands an undecided
@@ -621,9 +634,8 @@ request to the human approval dialog. The agent can retry a failed review or
 choose an alternative that respects the restriction. Failures grant no access,
 and repeated failures do not prevent a fresh review in the same turn.
 
-Set trusted `interactionMode: "interactive"` to enable human fallback. Direct
-file operations excluded by the permission system remain excluded: automatic
-mode returns instructions to use sandboxed Bash or an explicitly reviewed
+Direct file operations excluded by the permission system remain excluded. This mode
+returns instructions to use sandboxed Bash or an explicitly reviewed
 `bash_escalate` command instead of opening a confirmation dialog.
 
 The reviewer defaults to low thinking and 32,768 output tokens. Pi compaction

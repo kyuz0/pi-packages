@@ -8,7 +8,8 @@ export type BoundaryApprovalBrokerService = {
   consumeGrant(request: BoundaryRequest, sessionId: string, token: string): boolean;
 };
 
-type Registration = { broker: BoundaryApprovalBroker; sessionId: () => string };
+type SessionBroker = Pick<BoundaryApprovalBroker, "review" | "consumeGrant" | "clear">;
+type Registration = { broker: SessionBroker; sessionId: () => string };
 type Registry = { registrations: Set<Registration>; service: BoundaryApprovalBrokerService };
 
 function unavailable(): BoundaryDecision {
@@ -20,7 +21,7 @@ function unavailable(): BoundaryDecision {
 }
 
 export function publishBoundaryBroker(
-  broker: BoundaryApprovalBroker,
+  broker: SessionBroker,
   sessionId: () => string,
 ): () => void {
   const target = globalThis as Record<symbol, unknown>;

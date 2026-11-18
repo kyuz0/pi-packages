@@ -9,6 +9,7 @@ import type { UserReviewUsage } from "../user-feedback.ts";
 import type {
   CompletionMessage,
   Config,
+  ReasoningLevel,
   ReviewUsage,
   ReviewAttemptObservation,
   ReviewErrorClass,
@@ -554,6 +555,15 @@ export async function resolveApiKeyAndHeaders(
   return auth;
 }
 
+export function reviewerReasoningLevels(model: ReviewerMeta["model"]): ReasoningLevel[] {
+  return ["off", ...getSupportedThinkingLevels(model).filter(level => level !== "off")];
+}
+
+export function reviewerReasoning(model: ReviewerMeta["model"], requested: ReasoningLevel): ReasoningLevel {
+  const levels = reviewerReasoningLevels(model);
+  return levels.includes(requested) ? requested : levels[1] ?? "off";
+}
+
 export async function modelCall(
   runtime: ReviewerRuntime,
   config: Config,
@@ -577,8 +587,7 @@ export async function modelCall(
       },
     ],
   };
-  const enabledLevels = getSupportedThinkingLevels(runtime.model).filter(level => level !== "off");
-  const reasoning = enabledLevels.find(level => level === config.reasoning) ?? enabledLevels[0];
+  const reasoning = reviewerReasoning(runtime.model, config.reasoning);
   const options = {
     apiKey: runtime.auth.apiKey,
     headers: runtime.auth.headers,
@@ -586,7 +595,7 @@ export async function modelCall(
     signal: controller.signal,
     maxTokens,
     maxRetries: 0,
-    reasoning: config.reasoning === "off" ? undefined : reasoning,
+    reasoning: reasoning === "off" ? undefined : reasoning,
     cacheRetention: "short" as const,
     // A permission review is a complete independent request. In particular,
     // do not let Codex WebSocket continuation attach a prior review response
