@@ -1,6 +1,7 @@
 import type {
   BoundaryApprovalBrokerService,
   BoundaryRequest,
+  ReviewerConfirmation,
 } from "@erichll/pi-auto-review/broker";
 import { sandboxTrapToBoundaryRequest } from "@erichll/pi-auto-review/sandbox";
 import type { SandboxApprovalTrap } from "./traps.ts";
@@ -16,6 +17,7 @@ export type HumanApproval = (
   request: BoundaryRequest,
   reason?: string,
   signal?: AbortSignal,
+  confirmation?: ReviewerConfirmation,
 ) => Promise<"allow-once" | "deny">;
 
 export type TrapApprovalContext = {
@@ -28,6 +30,7 @@ export type TrapApprovalContext = {
   signal?: AbortSignal;
   humanApproval?: HumanApproval;
   humanFallback?: boolean;
+  isCurrent?: () => boolean;
 };
 
 export type TrapApprovalResult = {
@@ -96,11 +99,18 @@ async function askHuman(
   request: BoundaryRequest,
   context: TrapApprovalContext,
   reason?: string,
+  confirmation?: ReviewerConfirmation,
 ): Promise<TrapApprovalResult> {
   if (!context.humanApproval || context.signal?.aborted) {
     return { action: "deny", source: "unavailable", reason };
   }
-  const choice = await context.humanApproval(request, reason, context.signal);
+  if (confirmation && !confirmation.isCurrent()) {
+    return { action: "deny", source: "unavailable", reason: "The request changed. No permission was granted." };
+  }
+  const choice = await context.humanApproval(request, reason, context.signal, confirmation);
+  if (context.signal?.aborted || (confirmation && !confirmation.isCurrent())) {
+    return { action: "deny", source: "unavailable", reason: "The request changed or was cancelled. No permission was granted." };
+  }
   return choice === "allow-once"
     ? { action: "allow", source: "human", reason }
     : { action: "deny", source: "human", reason };
@@ -110,7 +120,7 @@ async function approveBoundaryRequest(
   request: BoundaryRequest,
   context: TrapApprovalContext,
 ): Promise<TrapApprovalResult> {
-  if (!context.broker && !(context.humanFallback ?? ["manual", "assisted"].includes(process.env.SANDBOX_APPROVAL_MODE ?? ""))) return { action: "deny", source: "unavailable", reason: "Automatic reviewer is unavailable. No permission granted; retry after the reviewer is available." };
+  if (!context.broker && !(context.humanFallback ?? process.env.SANDBOX_APPROVAL_MODE === "manual")) return { action: "deny", source: "unavailable", reason: "Automatic reviewer is unavailable. No permission granted; retry after the reviewer is available." };
   if (!context.broker) {
     return askHuman(request, context, "pi-auto-review broker is unavailable");
   }
@@ -120,6 +130,8 @@ async function approveBoundaryRequest(
     decision = await context.broker.review(request, {
       sessionId: context.sessionId,
       scopeKey: context.scopeKey,
+      isCurrent: context.isCurrent,
+      signal: context.signal,
       issueGrant: true,
     });
   } catch (error) {
@@ -147,7 +159,7 @@ async function approveBoundaryRequest(
     };
   }
   if (decision.kind === "defer") {
-    return askHuman(request, context, decision.review.rationale);
+    return askHuman(request, context, decision.review.rationale, decision.confirmation);
   }
   if (
     !decision.grant ||

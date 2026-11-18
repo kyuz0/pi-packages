@@ -48,6 +48,7 @@ export type PolicyAuditReportOptions = {
 // (including pi-auto-review's own model review) resolve to `authorizer_allowed`
 // instead of `user_approved`. Counting those here would create a feedback loop:
 // machine review allows → evidence → suggested auto-allow rule → review bypassed.
+// One-time overrides of a reviewer denial also cannot justify a standing allow.
 const SUCCESS_RESOLUTIONS = new Set([
   "user_approved", "user_approved_for_session", "session_approved",
 ]);
@@ -83,6 +84,7 @@ function rank(
 function reviewed(row: PolicyAuditAggregateRow): boolean {
   return [
     "user_approved", "user_approved_for_session", "user_denied", "auto_approved",
+    "reviewer_fallback_approved",
     "authorizer_allowed", "authorizer_denied",
   ].includes(row.resolution);
 }

@@ -224,16 +224,21 @@ Package defaults:
 }
 ```
 
-- **Automatic (non-interactive)** is the default, configured with
-  `interactionMode: "automatic"`. When a review blocks an action, the agent gets
-  the reason and can choose another permitted approach.
-- **Automatic (interactive)** uses `interactionMode: "interactive"`. The
-  reviewer asks you when it leaves a decision open. An explicit denial still
-  blocks the action. The default `failureMode: "deny"` also blocks provider and
-  review failures. Set `failureMode: "defer"` to let a human handle those failures.
-  Set `autoConfirmBoundedAllows` to `[]` to keep every bounded allow manual.
+- **Auto (non-interactive)** is the default, configured with
+  `interactionMode: "automatic"`. A reviewer model checks actions that need
+  approval. If it blocks an action, the agent gets the reason without a prompt.
+- In **Pi Sandbox Factory**, **Auto (interactive)** uses the reviewer model
+  first. If the reviewer rejects an action or leaves the decision open, Pi or
+  Pendant asks you to allow that exact action once or deny it. A critical rating
+  also requires typing `APPROVE`. Reviewer failures and explicit local policy
+  blocks keep the action blocked.
+- Outside Factory, `interactionMode: "interactive"` asks the user when the
+  reviewer defers. Explicit denials still block the action. The default
+  `failureMode: "deny"` blocks review failures. Set `failureMode: "defer"` to
+  let a human handle those failures. Set `autoConfirmBoundedAllows` to `[]` to
+  keep every bounded allow manual.
 
-Factory also offers **Manual (ask me)** and **No approval prompts (YOLO)**.
+Factory also offers **Manual approval (ask me)** and **YOLO (no approvals)**.
 These modes use the sandbox's permission policy without an AI reviewer. The
 reviewer command controls only the model and thinking effort.
 
@@ -626,7 +631,7 @@ subagent boundaries. No represented operation is executed; the main-agent
 request is aborted after the samples finish. `--no-builtin-tools` ensures Bash
 comes from `pi-sandbox` rather than Pi's built-in implementation.
 
-## Automatic (non-interactive)
+## Auto (non-interactive)
 
 The default `interactionMode: "automatic"` returns review failures and rejections
 to the agent as blocked operations with a reason. It never hands an undecided

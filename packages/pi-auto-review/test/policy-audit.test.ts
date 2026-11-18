@@ -305,6 +305,10 @@ test("authorizer resolutions are recorded verbatim and never become suggestion e
         requestId: `auth-allow-${index}`, surface: "fetch_content", value: "https://example.test",
         result: "allow", resolution: "authorizer_allowed", origin: "package",
       });
+      controller.record({
+        requestId: `human-after-review-${index}`, surface: "bash", value: "git status",
+        result: "allow", resolution: "reviewer_fallback_approved", origin: "package",
+      });
     }
     controller.record({
       requestId: "auth-deny", surface: "bash", value: "company-cli deploy",
@@ -316,6 +320,7 @@ test("authorizer resolutions are recorded verbatim and never become suggestion e
       true,
       "authorizer_allowed is persisted instead of collapsing into unknown",
     );
+    assert.ok(report.approvalSources.some((item) => item.name === "reviewer_fallback_approved/default"));
     assert.equal(report.suggestedAllowRules.length, 0);
     assert.equal(report.insufficientEvidence.length, 0);
     await controller.close();

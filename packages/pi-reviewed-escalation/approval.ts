@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { BoundaryApprovalBrokerService, BoundaryRequest } from "@erichll/pi-auto-review/broker";
+import type { BoundaryApprovalBrokerService, BoundaryRequest, ReviewerConfirmation } from "@erichll/pi-auto-review/broker";
 
 export type EscalationInput = {
   command: string;
@@ -22,7 +22,8 @@ export async function approveEscalation(
   options: {
     broker?: BoundaryApprovalBrokerService;
     signal?: AbortSignal;
-    confirm?: (request: BoundaryRequest, rationale: string) => Promise<boolean>;
+    isCurrent?: () => boolean;
+    confirm?: (request: BoundaryRequest, rationale: string, confirmation?: ReviewerConfirmation) => Promise<boolean>;
   },
 ): Promise<EscalationApproval> {
   if (options.signal?.aborted) return { allowed: false, rationale: "Escalation cancelled." };
@@ -52,6 +53,8 @@ export async function approveEscalation(
   const decision = await broker.review(request, {
     sessionId: input.sessionId,
     scopeKey: input.scopeKey,
+    isCurrent: options.isCurrent,
+    signal: options.signal,
     issueGrant: true,
   });
   if (options.signal?.aborted) return { allowed: false, rationale: "Escalation cancelled." };
@@ -60,8 +63,12 @@ export async function approveEscalation(
     return { allowed: false, rationale: decision.review.rationale + recovery };
   }
   if (decision.kind === "defer") {
-    const approved = options.confirm && await options.confirm(request, decision.review.rationale);
-    if (options.signal?.aborted || !approved) return { allowed: false, rationale: decision.review.rationale };
+    const confirmation = decision.confirmation;
+    if (confirmation && !confirmation.isCurrent()) return { allowed: false, rationale: "The request changed. No permission was granted." };
+    const approved = options.confirm && await options.confirm(request, decision.review.rationale, confirmation);
+    if (options.signal?.aborted || !approved || (confirmation && !confirmation.isCurrent())) {
+      return { allowed: false, rationale: decision.review.rationale };
+    }
     return { allowed: true, rationale: decision.review.rationale, approvedBy: "human" };
   }
   if (!decision.grant || !broker.consumeGrant(request, input.sessionId, decision.grant.token)) {

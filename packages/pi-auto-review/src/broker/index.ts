@@ -26,5 +26,6 @@ export type {
   BoundarySurface,
   BoundaryUserOverride,
   RecentBoundaryDenial,
+  ReviewerConfirmation,
   UserAuthorization,
 } from "./types.ts";

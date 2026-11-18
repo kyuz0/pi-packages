@@ -67,6 +67,8 @@ export type BoundaryReview = {
   riskLevel: BoundaryRiskLevel;
   userAuthorization: UserAuthorization;
   rationale: string;
+  /** A deterministic preflight result with no model verdict. */
+  preflightBlocked?: true;
 };
 
 export type BoundaryGrant = {
@@ -75,6 +77,14 @@ export type BoundaryGrant = {
   sessionId: string;
   expiresAt: number;
   usesRemaining: 1;
+};
+
+export type ReviewerConfirmation = {
+  reason: string;
+  outcome: "deny" | "defer";
+  critical: boolean;
+  signal?: AbortSignal;
+  isCurrent(): boolean;
 };
 
 export type BoundaryDecision =
@@ -101,12 +111,15 @@ export type BoundaryDecision =
   | {
       kind: "defer";
       review: BoundaryReview;
+      confirmation?: ReviewerConfirmation;
     };
 
 export type BoundaryReviewContext = {
   sessionId: string;
   scopeKey: string;
   issueGrant?: boolean;
+  signal?: AbortSignal;
+  isCurrent?: () => boolean;
 };
 
 export type BoundaryUserOverride = {

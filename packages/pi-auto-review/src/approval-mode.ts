@@ -1,10 +1,10 @@
 import type { ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 
 const labels = {
-  automatic: "Automatic (non-interactive)",
-  assisted: "Automatic (interactive)",
-  manual: "Manual (ask me)",
-  off: "No approval prompts (YOLO)",
+  automatic: "Auto (non-interactive)",
+  assisted: "Auto (interactive)",
+  manual: "Manual approval (ask me)",
+  off: "YOLO (no approvals)",
 };
 
 export function notifyApprovalMode(

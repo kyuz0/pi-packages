@@ -16,6 +16,7 @@ import type {
 export type BoundaryApprovalBrokerOptions = {
   reviewer: BoundaryReviewer;
   humanFallback?: boolean;
+  confirmReviewerDenials?: boolean;
   hardDeny?: BoundaryHardDeny;
   failureMode?: "deny" | "defer";
   grants?: OneShotGrantStore;
@@ -49,6 +50,8 @@ function assertRequest(request: BoundaryRequest): void {
 export class BoundaryApprovalBroker {
   readonly #reviewer: BoundaryReviewer;
   readonly #humanFallback: boolean;
+  readonly #confirmReviewerDenials: boolean;
+  #generation = 0;
   readonly #hardDeny?: BoundaryHardDeny;
   readonly #failureMode: "deny" | "defer";
   readonly #grants: OneShotGrantStore;
@@ -60,6 +63,7 @@ export class BoundaryApprovalBroker {
   constructor(options: BoundaryApprovalBrokerOptions) {
     this.#reviewer = options.reviewer;
     this.#humanFallback = options.humanFallback ?? true;
+    this.#confirmReviewerDenials = this.#humanFallback && options.confirmReviewerDenials === true;
     this.#hardDeny = options.hardDeny;
     this.#failureMode = options.failureMode ?? "deny";
     this.#grants = options.grants ?? new OneShotGrantStore();
@@ -78,6 +82,8 @@ export class BoundaryApprovalBroker {
     context: BoundaryReviewContext,
   ): Promise<BoundaryDecision> {
     assertRequest(request);
+    const generation = this.#generation;
+    const isCurrent = () => generation === this.#generation && !context.signal?.aborted && (context.isCurrent?.() ?? true);
     const hardDeny = this.#hardDeny?.(request);
     if (hardDeny) {
       const breaker = this.#breaker.record(context.scopeKey, true);
@@ -103,7 +109,7 @@ export class BoundaryApprovalBroker {
       };
     }
 
-    const breakGlass = this.#breakGlassEnabled
+    const breakGlass = this.#breakGlassEnabled && !this.#confirmReviewerDenials
       ? this.#denials.consumeCritical(request, context)
       : undefined;
     if (breakGlass) {
@@ -138,14 +144,14 @@ export class BoundaryApprovalBroker {
       };
     }
 
-    const userOverride = this.#denials.consume(request, context);
+    const userOverride = this.#confirmReviewerDenials ? undefined : this.#denials.consume(request, context);
     if (userOverride) {
       this.audit("override_consumed", request, {
         originalRequestId: userOverride.originalRequestId,
         approvedAt: userOverride.approvedAt,
         scopeKey: context.scopeKey,
       });
-    } else if (this.#humanFallback && this.#breaker.isTripped(context.scopeKey)) {
+    } else if (this.#humanFallback && !this.#confirmReviewerDenials && this.#breaker.isTripped(context.scopeKey)) {
       const review: BoundaryReview = {
         ...FAILURE_REVIEW,
         rationale:
@@ -167,7 +173,7 @@ export class BoundaryApprovalBroker {
     } catch (error) {
       const { reason, errorClass } = reviewerFailure(error);
       this.audit("review_failure", request, { errorClass });
-      if (!this.#humanFallback) return this.unavailable(reason);
+      if (!this.#humanFallback || this.#confirmReviewerDenials) return this.unavailable(reason);
       if (this.#failureMode === "defer") {
         this.#breaker.record(context.scopeKey, false);
         return {
@@ -192,6 +198,23 @@ export class BoundaryApprovalBroker {
     }
 
     this.audit("review_decision", request, review);
+    if (this.#confirmReviewerDenials) {
+      if (!isCurrent()) return this.unavailable("The request changed during review. No permission was granted.");
+      if (review.preflightBlocked) return this.unavailable(review.rationale);
+      if (review.outcome !== "allow") {
+        return {
+          kind: "defer",
+          review,
+          confirmation: {
+            reason: review.rationale,
+            outcome: review.outcome,
+            critical: review.riskLevel === "critical",
+            signal: context.signal,
+            isCurrent,
+          },
+        };
+      }
+    }
     if (!this.#humanFallback && review.outcome === "defer") return {
       kind: "deny", review, circuitBreakerTripped: false, denialSource: "reviewer", recoveryCommand: false,
     };
@@ -329,6 +352,7 @@ export class BoundaryApprovalBroker {
   }
 
   clear(): void {
+    this.#generation++;
     this.#grants.clear();
     this.#breaker.clear();
     this.#denials.clear();

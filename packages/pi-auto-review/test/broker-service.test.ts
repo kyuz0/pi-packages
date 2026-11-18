@@ -77,3 +77,26 @@ test("session ID changes route only to the current ID",async()=>{
     assert.equal((await service.review(request,context("new"))).kind,"allow");
   } finally {end();}
 });
+
+test("a pending managed confirmation requires a current and uniquely registered session", async () => {
+  const broker = new BoundaryApprovalBroker({
+    confirmReviewerDenials: true,
+    reviewer: async () => review("leave this action to the user", "deny"),
+  });
+  let evidence = "original instructions";
+  const end = publishBoundaryBroker(broker, () => "same", () => {
+    const initial = evidence;
+    return () => evidence === initial;
+  });
+  try {
+    const decision = await getBoundaryBroker()!.review(request, context("same"));
+    assert.equal(decision.kind, "defer");
+    assert.ok(decision.confirmation);
+    assert.equal(decision.confirmation.isCurrent(), true);
+    const endDuplicate = publishBoundaryBroker(broker, () => "same");
+    try { assert.equal(decision.confirmation.isCurrent(), false); }
+    finally { endDuplicate(); }
+    evidence = "edited instructions";
+    assert.equal(decision.confirmation.isCurrent(), false);
+  } finally { end(); }
+});

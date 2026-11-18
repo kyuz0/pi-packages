@@ -116,7 +116,9 @@ export async function completeConversation(o: Options): Promise<ReviewResult> {
         o.observe?.({ type: "review_attempt", requestId: request.id, surface: request.surface, ...observation });
         if (parentChanged()) {
           lease.invalidate();
-          if (decision.outcome === "deny") return finish("deny", decision.rationale, decision);
+          if (decision.outcome === "deny" && !(process.env.PI_SANDBOX_CONTAINER === "1" && process.env.SANDBOX_APPROVAL_MODE === "assisted")) {
+            return finish("deny", decision.rationale, decision);
+          }
           return finish("defer", "The parent conversation changed during review; review again with current instructions.", undefined, "parent_changed");
         }
         if (controller.signal.aborted) return finish("defer", "Reviewer cancelled before completion.", undefined, "abort");

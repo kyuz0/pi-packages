@@ -9,7 +9,11 @@ export type BoundaryApprovalBrokerService = {
 };
 
 type SessionBroker = Pick<BoundaryApprovalBroker, "review" | "consumeGrant" | "clear">;
-type Registration = { broker: SessionBroker; sessionId: () => string };
+type Registration = {
+  broker: SessionBroker;
+  sessionId: () => string;
+  trackRequest?: () => () => boolean;
+};
 type Registry = { registrations: Set<Registration>; service: BoundaryApprovalBrokerService };
 
 function unavailable(): BoundaryDecision {
@@ -23,6 +27,7 @@ function unavailable(): BoundaryDecision {
 export function publishBoundaryBroker(
   broker: SessionBroker,
   sessionId: () => string,
+  trackRequest?: Registration["trackRequest"],
 ): () => void {
   const target = globalThis as Record<symbol, unknown>;
   let registry = target[BOUNDARY_BROKER_SERVICE_KEY] as Registry | undefined;
@@ -37,7 +42,12 @@ export function publishBoundaryBroker(
       review: async (request, context) => {
         const registration = select(context.sessionId);
         if (!registration) return unavailable();
-        const decision = await registration.broker.review(request, context);
+        const stillCurrent = registration.trackRequest?.();
+        const decision = await registration.broker.review(request, {
+          ...context,
+          isCurrent: () => select(context.sessionId) === registration &&
+            (stillCurrent?.() ?? true) && (context.isCurrent?.() ?? true),
+        });
         // Disposal/replacement during a model call revokes its eventual result.
         return select(context.sessionId) === registration ? decision : unavailable();
       },
@@ -46,7 +56,7 @@ export function publishBoundaryBroker(
     target[BOUNDARY_BROKER_SERVICE_KEY] = registry;
   }
   const owner = registry;
-  const registration = { broker, sessionId };
+  const registration = { broker, sessionId, trackRequest };
   owner.registrations.add(registration);
   return () => {
     owner.registrations.delete(registration);

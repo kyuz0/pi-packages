@@ -30,6 +30,7 @@ const PERMISSION_RESOLUTIONS = new Set([
   "session_approved",
   "infrastructure_auto_allowed",
   "user_approved",
+  "reviewer_fallback_approved",
   "user_approved_for_session",
   "user_denied",
   "auto_approved",

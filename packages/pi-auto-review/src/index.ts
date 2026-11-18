@@ -1,3 +1,4 @@
+import { retainedSnapshot } from "./review/retained-context.ts";
 import { reviewerFailure } from "./broker/reviewer-failure.ts";
 import { randomBytes } from "node:crypto";
 
@@ -232,6 +233,7 @@ export function createPiAutoReviewExtension(
   let shuttingDown = false;
   let disposeBrokerService: (() => void) | undefined;
   const reviewResults = new Map<string, ReviewResult>();
+  const reviewerConfirmations = new Set<string>();
   const telemetryCompleted = new Set<string>();
   let broker: BoundaryApprovalBroker | undefined;
   // Reviewer metadata is re-resolved per review (see ReviewerMeta above),
@@ -309,6 +311,23 @@ export function createPiAutoReviewExtension(
     }
   };
 
+  const managedAssisted = process.env.PI_SANDBOX_CONTAINER === "1" &&
+    process.env.SANDBOX_APPROVAL_MODE === "assisted";
+
+  const trackRequest = (ctx: ExtensionContext): (() => boolean) => {
+    const requestConfig = config;
+    const signal = ctx.signal;
+    const epoch = registrationEpoch;
+    const currentModel = () => ctx.model && `${ctx.model.provider}/${ctx.model.id}`;
+    const startingModel = currentModel();
+    const snapshot = () => retainedSnapshot(
+      ctx.sessionManager.getSessionId(), ctx.sessionManager.getBranch(), requestConfig.trustedQuestionTools,
+    );
+    const initial = snapshot();
+    return () => !shuttingDown && !signal?.aborted && epoch === registrationEpoch &&
+      config === requestConfig && currentModel() === startingModel && snapshot() === initial;
+  };
+
   const createBroker = (): BoundaryApprovalBroker =>
     new BoundaryApprovalBroker({
       reviewer: async (request, reviewerContext) => {
@@ -347,7 +366,8 @@ export function createPiAutoReviewExtension(
             ),
           );
           telemetryCompleted.add(request.id);
-          return modelDecisionToBoundaryReview(result.decision);
+          const review = modelDecisionToBoundaryReview(result.decision);
+          return result.attempts === 0 ? { ...review, preflightBlocked: true } : review;
         } catch (error) {
           const execution = error instanceof ReviewExecutionError
             ? error
@@ -398,6 +418,7 @@ export function createPiAutoReviewExtension(
           toolInputPreview: request.toolInputPreview,
         }),
       humanFallback: config.interactionMode === "interactive",
+      confirmReviewerDenials: managedAssisted,
       failureMode: config.failureMode,
       breakGlassEnabled: config.breakGlassEnabled,
       grants: new OneShotGrantStore(config.grantTtlMs),
@@ -677,6 +698,7 @@ export function createPiAutoReviewExtension(
     disposeBrokerService?.();
     broker?.clear();
     reviewResults.clear();
+    reviewerConfirmations.clear();
     telemetryCompleted.clear();
     uiAutoConfirmer.clear();
     try {
@@ -689,7 +711,11 @@ export function createPiAutoReviewExtension(
       context = ctx;
       broker = createBroker();
       policyAudit.warmup();
-      disposeBrokerService = publishBoundaryBroker(broker, () => ctx.sessionManager.getSessionId());
+      disposeBrokerService = publishBoundaryBroker(
+        broker,
+        () => ctx.sessionManager.getSessionId(),
+        managedAssisted ? () => context ? trackRequest(context) : () => false : undefined,
+      );
     } catch (error) {
       context = undefined;
       broker = undefined;
@@ -725,8 +751,12 @@ export function createPiAutoReviewExtension(
     const decision = event as PermissionDecisionLike;
     // RPC and TUI auto-confirmations can look like human clicks to the host.
     // They must never become evidence for removing the model review later.
-    policyAudit.record(uiAutoConfirmer.consumeAutoApproval(decision.requestId)
-      ? {...decision, resolution: "authorizer_allowed"} : decision);
+    const confirmedAfterReview = typeof decision.requestId === "string" &&
+      reviewerConfirmations.delete(decision.requestId) && decision.resolution === "user_approved";
+    const automaticallyConfirmed = uiAutoConfirmer.consumeAutoApproval(decision.requestId);
+    const resolution = confirmedAfterReview ? "reviewer_fallback_approved"
+      : automaticallyConfirmed ? "authorizer_allowed" : decision.resolution;
+    policyAudit.record({ ...decision, resolution });
   });
 
   pi.events.on("permissions:ready", (event) => {
@@ -791,6 +821,8 @@ export function createPiAutoReviewExtension(
           const target = reviewTargetFromRequest(request);
           const reviewContext = context;
           const requestEpoch = registrationEpoch;
+          const scopeKey = currentTurnScope(reviewContext);
+          const isCurrent = managedAssisted ? trackRequest(reviewContext) : undefined;
           const widgetGeneration = reviewWidget.begin(request.id, reviewContext, {
             surface,
             target,
@@ -798,7 +830,9 @@ export function createPiAutoReviewExtension(
           });
           const decision = await broker.review(request, {
             sessionId: reviewContext.sessionManager.getSessionId(),
-            scopeKey: currentTurnScope(reviewContext),
+            scopeKey,
+            isCurrent,
+            signal: reviewContext.signal,
             issueGrant: false,
           });
           const result = reviewResults.get(request.id);
@@ -824,6 +858,8 @@ export function createPiAutoReviewExtension(
             userOutcome = config.interactionMode === "interactive" ? "needs_confirmation" : "deny";
           } else if (decision.kind === "allow") {
             userOutcome = "allow";
+          } else if (decision.kind === "defer" && decision.confirmation) {
+            userOutcome = "needs_confirmation";
           } else if (decision.kind === "defer" || decision.review.outcome === "defer") {
             userOutcome = "defer";
           } else {
@@ -906,6 +942,13 @@ export function createPiAutoReviewExtension(
                   ? " Not executed. Provide the missing evidence or use a permitted alternative."
                   : " Not executed. Do not repeat unchanged; follow the stated alternative without bypassing the restriction."),
           };
+          if (decision.kind === "defer" && decision.confirmation) {
+            reviewerConfirmations.add(details.requestId);
+            // Older permission-system versions treat this as a denial.
+            const verdict = { kind: "deny" as const, reason: rationale, confirmation: decision.confirmation };
+            return verdict;
+          }
+          if (decision.kind === "deny" && decision.denialSource === "unavailable") return { kind: "deny", reason: rationale };
           if (allowCapped || decision.kind === "defer") {
             return { kind: "defer" };
           }
@@ -957,6 +1000,7 @@ export function createPiAutoReviewExtension(
     broker?.clear();
     broker = undefined;
     reviewResults.clear();
+    reviewerConfirmations.clear();
     uiAutoConfirmer.clear();
     context = undefined;
     await policyAudit.close();

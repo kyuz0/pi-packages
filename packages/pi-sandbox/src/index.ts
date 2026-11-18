@@ -102,7 +102,7 @@ function externalSubagentDiagnostic(pi: ExtensionAPI): {
 }
 
 function humanApproval(ctx: ExtensionContext): HumanApproval {
-  return async (request, reason, signal) => {
+  return async (request, reason, signal, confirmation) => {
     if (!ctx.hasUI || ["automatic", "off"].includes(process.env.SANDBOX_APPROVAL_MODE ?? "")) return "deny";
     const target =
       request.surface === "host-ipc"
@@ -123,9 +123,11 @@ function humanApproval(ctx: ExtensionContext): HumanApproval {
       ["Allow this exact operation once", "Deny"],
       { signal },
     );
-    return selected === "Allow this exact operation once"
-      ? "allow-once"
-      : "deny";
+    if (selected !== "Allow this exact operation once" || signal?.aborted) return "deny";
+    if (!confirmation?.critical) return "allow-once";
+    if (!confirmation.isCurrent()) return "deny";
+    const typed = await ctx.ui.input("The reviewer rated this action critical. Type APPROVE to allow it once.", undefined, { signal });
+    return typed === "APPROVE" ? "allow-once" : "deny";
   };
 }
 
@@ -142,13 +144,15 @@ function sandboxOperations(
   return {
     exec(command, cwd, options) {
       const currentSessionId = sessionId(ctx);
+      const requestTurn = turnIndex();
       const shellPath = SettingsManager.create(cwd).getShellPath();
       const approvalContext = {
         broker: getBoundaryBroker(),
         command,
         cwd,
         sessionId: currentSessionId,
-        scopeKey: `${currentSessionId}:turn:${turnIndex()}`,
+        scopeKey: `${currentSessionId}:turn:${requestTurn}`,
+        isCurrent: () => turnIndex() === requestTurn && sessionId(ctx) === currentSessionId,
         signal: options.signal,
         humanApproval: humanApproval(ctx),
       };

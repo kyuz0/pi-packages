@@ -754,3 +754,71 @@ test("automatic mode never grants a deterministic hard denial",async()=>{
  let calls=0;const b=new BoundaryApprovalBroker({humanFallback:false,hardDeny:()=>({rule:"protected",reason:"Protected file"}),reviewer:async()=>{calls++;return allowReview;}});
  const d=await b.review(request,{sessionId:"s",scopeKey:"s",issueGrant:true});assert.equal(d.kind,"deny");assert.equal(calls,0);
 });
+
+test("managed interactive confirmation follows only a real live reviewer verdict", async () => {
+  const context = { sessionId: "session", scopeKey: "turn", issueGrant: true };
+  for (const outcome of ["deny", "defer"] as const) {
+    let calls = 0;
+    const review = { ...allowReview, outcome, riskLevel: "critical" as const };
+    const broker = new BoundaryApprovalBroker({
+      confirmReviewerDenials: true,
+      reviewer: async () => { calls++; return review; },
+    });
+    for (let i = 0; i < 4; i++) {
+      const decision = await broker.review(request, context);
+      assert.equal(decision.kind, "defer");
+      assert.ok(decision.confirmation);
+      assert.equal(decision.confirmation.isCurrent(), true);
+      assert.equal(decision.confirmation.outcome, outcome);
+      assert.equal(decision.confirmation.critical, true);
+      assert.equal(decision.confirmation.reason, review.rationale);
+    }
+    assert.equal(calls, 4);
+    assert.deepEqual(broker.recentDenials(context.sessionId), []);
+  }
+
+  const failure = new BoundaryApprovalBroker({
+    confirmReviewerDenials: true,
+    failureMode: "defer",
+    reviewer: async () => { throw new Error("Synthetic provider failure"); },
+  });
+  const preflight = new BoundaryApprovalBroker({
+    confirmReviewerDenials: true,
+    reviewer: async () => ({ ...allowReview, outcome: "defer", preflightBlocked: true }),
+  });
+  const hardDeny = new BoundaryApprovalBroker({
+    confirmReviewerDenials: true,
+    hardDeny: () => ({ rule: "fixture", reason: "Explicit local deny" }),
+    reviewer: async () => assert.fail("A local deny reached the reviewer"),
+  });
+  for (const [broker, source] of [[failure, "unavailable"], [preflight, "unavailable"], [hardDeny, "hard-deny"]] as const) {
+    const decision = await broker.review(request, context);
+    assert.equal(decision.kind, "deny");
+    assert.equal(decision.denialSource, source);
+    assert.equal(decision.recoveryCommand, false);
+  }
+});
+
+test("managed confirmation expires with the request, even before a queued prompt is answered", async () => {
+  let current = true;
+  const controller = new AbortController();
+  const context = {
+    sessionId: "session", scopeKey: "turn", issueGrant: true,
+    signal: controller.signal, isCurrent: () => current,
+  };
+  const broker = new BoundaryApprovalBroker({
+    confirmReviewerDenials: true,
+    reviewer: async () => ({ ...allowReview, outcome: "deny" }),
+  });
+  const decision = await broker.review(request, context);
+  assert.equal(decision.kind, "defer");
+  assert.ok(decision.confirmation);
+  assert.equal(decision.confirmation.isCurrent(), true);
+  current = false;
+  assert.equal(decision.confirmation.isCurrent(), false);
+  assert.equal((await broker.review(request, context)).kind, "deny");
+  current = true;
+  controller.abort();
+  assert.equal(decision.confirmation.isCurrent(), false);
+  assert.equal((await broker.review(request, context)).kind, "deny");
+});

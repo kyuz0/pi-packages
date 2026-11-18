@@ -1,0 +1,215 @@
+--- a/node_modules/@gotgenes/pi-permission-system/src/authority/authorizer.ts
++++ b/node_modules/@gotgenes/pi-permission-system/src/authority/authorizer.ts
+@@ -19,6 +19,15 @@
+ import type { SubagentDetector } from "./subagent-detection";
+ import type { SubagentSessionRegistry } from "./subagent-registry";
+
++/** A reviewer verdict that can be resolved by one answer in the current chat. */
++export interface ReviewerConfirmation {
++  reason: string;
++  outcome: "deny" | "defer";
++  critical: boolean;
++  signal?: AbortSignal;
++  isCurrent(): boolean;
++}
++
+ /**
+  * A non-terminal chain link's ruling on an `ask`: decide (`allow`/`deny`) or
+  * pass the ask on to the next link (`defer`). A `deny` carries an optional
+@@ -26,7 +35,7 @@
+  */
+ export type AuthorizerVerdict =
+   | { kind: "allow" }
+-  | { kind: "deny"; reason?: string }
++  | { kind: "deny"; reason?: string; confirmation?: ReviewerConfirmation }
+   | { kind: "defer" };
+
+ /**
+@@ -71,6 +80,10 @@
+  * wire so the serving node renders it under its own budget.
+  */
+ export interface TerminalAuthorizer {
++  confirmReviewedOnce?(
++    details: PromptPermissionDetails,
++    confirmation: ReviewerConfirmation,
++  ): Promise<PermissionPromptDecision>;
+   authorize(
+     details: PromptPermissionDetails,
+   ): Promise<PermissionPromptDecision>;
+--- a/node_modules/@gotgenes/pi-permission-system/src/authority/authorizer-chain.ts
++++ b/node_modules/@gotgenes/pi-permission-system/src/authority/authorizer-chain.ts
+@@ -40,6 +40,15 @@
+     async authorize(details) {
+       for (const link of links) {
+         const verdict = await link.authorize(details, query, log);
++        if (
++          verdict.kind === "deny" && verdict.confirmation &&
++          link.name === "pi-auto-review" &&
++          process.env.PI_SANDBOX_CONTAINER === "1" &&
++          process.env.SANDBOX_APPROVAL_MODE === "assisted" &&
++          terminal.confirmReviewedOnce
++        ) {
++          return terminal.confirmReviewedOnce(details, verdict.confirmation);
++        }
+         const decision = decideFromVerdict(link.name, verdict);
+         if (decision) {
+           return decision;
+--- a/node_modules/@gotgenes/pi-permission-system/src/authority/authorizer-selection.ts
++++ b/node_modules/@gotgenes/pi-permission-system/src/authority/authorizer-selection.ts
+@@ -199,6 +199,13 @@
+       const authorize = this.deps.authorizerRegistry.get(name);
+       if (authorize === undefined) {
+         this.deps.chainAudit.auditUnregisteredLink({ requestId, name });
++        if (name === "pi-auto-review" && process.env.PI_SANDBOX_CONTAINER === "1" &&
++            ["automatic", "assisted"].includes(process.env.SANDBOX_APPROVAL_MODE ?? "")) {
++          links.push({
++            name,
++            authorize: async () => ({ kind: "deny", reason: "The automatic reviewer is unavailable. No permission was granted." }),
++          });
++        }
+         continue;
+       }
+       resolved.push(name);
+--- a/node_modules/@gotgenes/pi-permission-system/src/authority/local-user-authorizer.ts
++++ b/node_modules/@gotgenes/pi-permission-system/src/authority/local-user-authorizer.ts
+@@ -16,7 +16,7 @@
+ import { buildUiPrompt } from "#src/service/permission-ui-prompt";
+ import { provenDirectionOf } from "#src/session/approval-grant";
+ import type { AskDialogAdmission } from "./ask-dialog-queue";
+-import type { TerminalAuthorizer } from "./authorizer";
++import type { ReviewerConfirmation, TerminalAuthorizer } from "./authorizer";
+ import type {
+   PermissionPromptDecision,
+   RequestPermissionOptions,
+@@ -69,6 +69,19 @@
+     return this.deps.dialogs.run(() => this.present(details), releasedDecision);
+   }
+
++  confirmReviewedOnce(
++    details: PromptPermissionDetails,
++    confirmation: ReviewerConfirmation,
++  ): Promise<PermissionPromptDecision> {
++    return this.deps.dialogs.run(async () => {
++      const current = () => !confirmation.signal?.aborted && confirmation.isCurrent();
++      const stale = () => releasedDecision("The request changed or was cancelled. No permission was granted.");
++      if (!current()) return stale();
++      const decision = await this.present(details, { reviewerConfirmation: confirmation });
++      return current() ? decision : stale();
++    }, releasedDecision);
++  }
++
+   /**
+    * Announce the imminent prompt, then show it.
+    *
+@@ -79,6 +92,7 @@
+    */
+   private present(
+     details: PromptPermissionDetails,
++    options = buildRequestOptions(details),
+   ): Promise<PermissionPromptDecision> {
+     emitUiPromptEvent(this.deps.events, buildUiPrompt(details));
+     const title = details.forwarding
+@@ -97,7 +111,7 @@
+       },
+       title,
+       details.payload,
+-      buildRequestOptions(details),
++      options,
+     );
+   }
+ }
+--- a/node_modules/@gotgenes/pi-permission-system/src/authority/permission-prompt-component.ts
++++ b/node_modules/@gotgenes/pi-permission-system/src/authority/permission-prompt-component.ts
+@@ -107,6 +107,13 @@
+   const surface = chooseDecisionSurface(view, title, payload, options);
+   try {
+     const answer = await surface.ask(window);
++    if (options?.reviewerConfirmation?.signal?.aborted) {
++      const reason = "The request was cancelled. No permission was granted.";
++      return {
++        approved: false, state: "denied", confirmationUnavailable: true,
++        denialReason: reason, decidedBy: { kind: "unavailable", reason },
++      };
++    }
+     return answer === undefined
+       ? window.expiredDecision()
+       : attributeToHuman(answer, surface.via);
+@@ -141,7 +148,7 @@
+   payload: PromptPayload,
+   options?: RequestPermissionOptions,
+ ): DecisionSurface {
+-  if (view.mode === "tui") {
++  if (view.mode === "tui" && !options?.reviewerConfirmation) {
+     return {
+       via: "dialog",
+       ask: (window) =>
+@@ -165,16 +172,18 @@
+   // The fallback renders once and cannot re-render, so it neither paints nor
+   // offers an expansion; it substitutes a nominal width for the terminal size
+   // it is never told, and the host's own select wraps from there.
+-  const rendered = renderPromptDialog(payload, {
+-    ...view.budget,
+-    width: FALLBACK_RENDER_WIDTH,
+-  });
++  const budget = options?.reviewerConfirmation
++    ? completeViewBudget(FALLBACK_RENDER_WIDTH)
++    : { ...view.budget, width: FALLBACK_RENDER_WIDTH };
++  const rendered = renderPromptDialog(payload, budget);
++  const reviewSignal = options?.reviewerConfirmation?.signal;
++  const dialogSignal = signal && reviewSignal ? AbortSignal.any([signal, reviewSignal]) : signal ?? reviewSignal;
+   return requestPermissionDecisionFromUi(
+     view.ui,
+     title,
+     rendered.lines.join("\n"),
+     options,
+-    signal,
++    dialogSignal,
+   );
+ }
+
+--- a/node_modules/@gotgenes/pi-permission-system/src/authority/permission-dialog.ts
++++ b/node_modules/@gotgenes/pi-permission-system/src/authority/permission-dialog.ts
+@@ -1,4 +1,5 @@
+ import type { SessionGrantWidth } from "#src/session/approval-grant";
++import type { ReviewerConfirmation } from "./authorizer";
+ import type { DecisionSource } from "./decision-source";
+
+ export type PermissionDecisionState =
+@@ -135,6 +136,7 @@
+ }
+
+ export interface RequestPermissionOptions {
++  reviewerConfirmation?: ReviewerConfirmation;
+   /** Override the "for this session" option label (e.g. to show the suggested pattern). */
+   sessionLabel?: string;
+   /**
+@@ -173,6 +175,29 @@
+   const dialogOptions: PermissionDialogOptions = { signal };
+   const dismissed = (answer: string | undefined): boolean =>
+     answer === undefined && signal?.aborted === true;
++  const confirmation = options?.reviewerConfirmation;
++  if (confirmation) {
++    const allowOnce = "Approve this action once";
++    const status = confirmation.outcome === "deny" ? "Reviewer rejected this action" : "Reviewer left the decision to you";
++    const reason = confirmation.reason.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, "");
++    const selected = await ui.select(
++      `${title}\n${message}\n${status}.\n${reason}`,
++      [allowOnce, "Deny"],
++      dialogOptions,
++    );
++    if (signal?.aborted) return undefined;
++    if (selected === allowOnce && confirmation.isCurrent()) {
++      if (!confirmation.critical) return { approved: true, state: "approved" };
++      const typed = await ui.input(
++        "The reviewer rated this action critical. Type APPROVE to allow it once.",
++        undefined,
++        dialogOptions,
++      );
++      if (signal?.aborted) return undefined;
++      if (typed === "APPROVE") return { approved: true, state: "approved" };
++    }
++    return createDeniedPermissionDecision(reason);
++  }
+   const sessionOption = options?.sessionLabel ?? APPROVE_FOR_SESSION_OPTION;
+   const widthOption = options?.sessionWidth?.label;
+   const decisionOptions = [
