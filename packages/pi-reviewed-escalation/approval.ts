@@ -90,7 +90,8 @@ export async function approveEscalation(
       (confirmation?.isCurrent() ?? true);
     if (!isCurrent()) return { allowed: false, rationale: "The request changed. No permission was granted." };
     const approved = options.confirm && await options.confirm(request, decision.review.rationale, confirmation, isCurrent);
-    if (!approved || !isCurrent()) {
+    if (!isCurrent()) return { allowed: false, rationale: "The request changed or was cancelled. No permission was granted." };
+    if (!approved) {
       return { allowed: false, rationale: decision.review.rationale };
     }
     return { allowed: true, rationale: decision.review.rationale, approvedBy: "human" };
