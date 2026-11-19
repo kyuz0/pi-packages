@@ -1,0 +1,89 @@
+--- a/node_modules/@gotgenes/pi-permission-system/src/access-intent/bash/bash-path-resolver.ts
++++ b/node_modules/@gotgenes/pi-permission-system/src/access-intent/bash/bash-path-resolver.ts
+@@ -15,6 +15,7 @@
+   type WordReader,
+ } from "./node-text";
+ import type { TSNode } from "./parser";
++import { parseUnresolvedWithin } from "./parse-health";
+ import { REDIRECT_NODE_TYPES } from "./redirect-analysis";
+ import {
+   classifyBareTokenCandidate,
+@@ -189,7 +190,7 @@
+       this.projectRuleCandidates(candidates);
+     return {
+       externalAccesses: this.withWorkdirExternal(
+-        this.projectExternalPaths(candidates),
++        this.projectExternalPaths(candidates, mountedCopySource(rootNode, this.words)),
+       ),
+       ruleCandidates,
+       argumentSpellings,
+@@ -526,11 +527,12 @@
+    */
+   private projectExternalPaths(
+     candidates: readonly PathCandidate[],
++    copySource: SourceSpan | undefined,
+   ): BashExternalPath[] {
+     const seen = new Map<string, number>();
+     const externalPaths: BashExternalPath[] = [];
+
+-    for (const { token, base, effect, role } of candidates) {
++    for (const { token, base, effect, role, span } of candidates) {
+       const candidate = admittedByRole(role)
+         ? token
+         : classifyTokenAsPathCandidate(token);
+@@ -562,11 +564,15 @@
+         base.kind === "known"
+           ? this.normalizer.resolveBase(base.offset)
+           : undefined;
++      const path = this.normalizer.forBashToken(candidate, { resolveBase });
++      // Retain both directions for symlinks and for every other occurrence
++      // of the same path. recordExternal merges those occurrences below.
++      const sourceRead = copySource && span &&
++        span.start === copySource.start && span.end === copySource.end &&
++        path.value() === path.boundaryValue();
+       this.collectIfExternal(
+-        this.normalizer.forBashToken(candidate, { resolveBase }),
+-        effect,
+-        seen,
+-        externalPaths,
++        path, sourceRead ? { effect: "read", source: "core" } : effect,
++        seen, externalPaths,
+       );
+     }
+
+@@ -812,6 +818,35 @@
+  */
+ function admittedByRole(role: TokenRole): boolean {
+   return role === "redirect-destination";
++}
++
++/** The source operand of a plain, literal copy out of a Factory folder. */
++function mountedCopySource(root: TSNode, words: WordReader): SourceSpan | undefined {
++  if (root.childCount !== 1 || parseUnresolvedWithin(root)) return;
++  const command = root.child(0);
++  if (command?.type !== "command" || command.child(0)?.type !== "command_name" ||
++      command.child(0)?.text !== "cp") return;
++  const withTerminator = command.childCount === 4 && command.child(1)?.text === "--";
++  if (command.childCount !== 3 && !withTerminator) return;
++  const source = command.child(withTerminator ? 2 : 1);
++  const destination = command.child(withTerminator ? 3 : 2);
++  for (const operand of [source, destination]) {
++    if (!operand || !["word", "raw_string", "string"].includes(operand.type)) return;
++    // Double-quoted expansions can resolve through the session environment.
++    // Only literal string content proves which two words cp receives.
++    if (operand.type === "string") {
++      for (let i = 0; i < operand.childCount; i++) {
++        const part = operand.child(i);
++        if (part?.isNamed && part.type !== "string_content") return;
++      }
++    }
++    const { value, computed } = words.argWord(operand);
++    if (computed || !value || (!withTerminator && value.startsWith("-"))) return;
++  }
++  if (!source) return;
++  const path = words.text(source);
++  if (!/^\/mnt\/[a-z0-9][a-z0-9._-]{0,31}\//.test(path) || path.split("/").includes("..")) return;
++  return { start: source.startIndex, end: source.endIndex };
+ }
+
+ /**

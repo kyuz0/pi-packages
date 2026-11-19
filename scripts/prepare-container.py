@@ -75,8 +75,8 @@ replace('@gotgenes/pi-permission-system/src/config/config-loader.ts',
         'const includeProjectScope = process.env.PI_SANDBOX_CONTAINER !== "1" && options.includeProjectScope !== false;')
 # Keep reviewer refusals in the normal permission queue. Only the managed
 # assisted mode may ask for one-time consent to a valid reviewer verdict.
-subprocess.run(['git', 'apply', str(root / 'scripts/permission-system-review.patch')],
-               cwd=root, check=True)
+for patch in ('permission-system-review.patch', 'permission-system-copy.patch'):
+    subprocess.run(['git', 'apply', str(root / 'scripts' / patch)], cwd=root, check=True)
 replace('@anthropic-ai/sandbox-runtime/dist/sandbox/linux-sandbox-utils.js',
         "bwrapArgs.push('--dev', '/dev');",
         "bwrapArgs.push('--dev-bind', '/dev', '/dev'); // isolated outer-container devices")
