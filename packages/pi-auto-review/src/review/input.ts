@@ -107,12 +107,16 @@ export function boundaryRequest(
       ? deterministicPolicy
       : JSON.stringify(deterministicPolicy);
   const destParsed = parseHostPort(evidence.destination);
+  const forwardedCwd = details.forwarding && Object.getOwnPropertyDescriptor(
+    details, Symbol.for("pi-auto-review:forwarded-cwd"),
+  )?.value;
   return {
     id: details.requestId,
     source: "permission-system",
     surface,
     operation: details.source || surface,
-    cwd: ctx.cwd,
+    cwd: details.forwarding && process.env.PI_SANDBOX_CONTAINER === "1"
+      ? (typeof forwardedCwd === "string" ? forwardedCwd : "") : ctx.cwd,
     command: evidence.command,
     ...(evidence.executedUnit ? { executedUnit: evidence.executedUnit } : {}),
     ...(evidence.fullCommand ? { fullCommand: evidence.fullCommand } : {}),

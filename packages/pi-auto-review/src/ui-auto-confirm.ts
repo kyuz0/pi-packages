@@ -21,12 +21,14 @@ const FINGERPRINT_PREFIX = 80;
 type PendingApproval = {
   surface: string;
   expiresAt: number;
+  isCurrent?: () => boolean;
 };
 
 type PromptAttempt = {
   controller: AbortController;
   settled: boolean;
   recognized: boolean;
+  isCurrent?: () => boolean;
   autoApprove?: () => void;
   denyForUiConflict?: () => void;
   restore?: () => void;
@@ -71,13 +73,14 @@ export class PermissionUiAutoConfirmer {
     this.automaticDecisions.add(requestId);
   }
 
-  stage(requestId: string, surface: string): boolean {
+  stage(requestId: string, surface: string, isCurrent?: () => boolean): boolean {
     this.pruneExpired();
     const info = pathSurfaceInfo(surface);
     if (!info || !this.enabledSurfaces().includes(info.family)) return false;
     this.pending.set(requestId, {
       surface,
       expiresAt: Date.now() + this.pendingTtlMs,
+      isCurrent,
     });
     return true;
   }
@@ -113,6 +116,7 @@ export class PermissionUiAutoConfirmer {
       controller: new AbortController(),
       settled: false,
       recognized: false,
+      isCurrent: pending.isCurrent,
     };
     this.activeAttempt = attempt;
     const installed = ctx.mode === "rpc"
@@ -174,7 +178,11 @@ export class PermissionUiAutoConfirmer {
         !selectOptions?.signal?.aborted;
       release();
       // Approve this ask only, never either session-grant option.
-      if (recognized) { this.noteAutoApproval(event.requestId); return Promise.resolve("Yes"); }
+      if (recognized) {
+        if (attempt.isCurrent && !attempt.isCurrent()) return Promise.resolve("No");
+        this.noteAutoApproval(event.requestId);
+        return Promise.resolve("Yes");
+      }
       return Reflect.apply(previousSelect, ui, [title, options, selectOptions]);
     }) as UiSelect;
     attempt.restore = restore;
@@ -243,7 +251,13 @@ export class PermissionUiAutoConfirmer {
         };
 
         attempt.autoApprove = () => {
-          if (!uiFinished) { this.noteAutoApproval(event.requestId); finish(AUTO_APPROVED_DECISION); }
+          if (uiFinished) return;
+          if (attempt.isCurrent && !attempt.isCurrent()) {
+            finish(UI_CONFLICT_DENIED_DECISION);
+            return;
+          }
+          this.noteAutoApproval(event.requestId);
+          finish(AUTO_APPROVED_DECISION);
         };
         attempt.denyForUiConflict = () => finish(UI_CONFLICT_DENIED_DECISION);
 

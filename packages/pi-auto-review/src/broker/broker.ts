@@ -171,7 +171,7 @@ export class BoundaryApprovalBroker {
 
     let review: BoundaryReview;
     try {
-      review = await this.#reviewer(request, { userOverride, ...(context.delegated ? { delegated: true } : {}) });
+      review = await this.#reviewer(request, { userOverride, ...(context.delegated ? { delegated: true, signal: context.signal } : {}) });
     } catch (error) {
       const { reason, errorClass } = reviewerFailure(error);
       this.audit("review_failure", request, { errorClass });

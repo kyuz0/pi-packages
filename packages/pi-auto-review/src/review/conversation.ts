@@ -12,7 +12,7 @@ import type { Config, ReviewPreflight, ReviewResult, ReviewExecutionSummary, Rev
 
 export { conversationPrompt } from "./prompts.ts";
 
-type Options = { ctx: ExtensionContext; config: Config; request: BoundaryRequest; transcript: TranscriptResult; preflight: ReviewPreflight; sharedContext: string; started: number; resolve: ReviewerResolver; observe?: (event: ReviewerTelemetryEvent) => void; branchCurrent?: () => boolean };
+type Options = { ctx: ExtensionContext; config: Config; request: BoundaryRequest; transcript: TranscriptResult; preflight: ReviewPreflight; sharedContext: string; started: number; resolve: ReviewerResolver; observe?: (event: ReviewerTelemetryEvent) => void; branchCurrent?: () => boolean; signal?: AbortSignal };
 export async function completeConversation(o: Options): Promise<ReviewResult> {
   const { ctx, config, request, transcript, preflight, started } = o;
   const summary: ReviewExecutionSummary = { attempts: [], errorCounts: {}, durationMs: 0, transcript, preflight };
@@ -31,7 +31,7 @@ export async function completeConversation(o: Options): Promise<ReviewResult> {
   };
   if (transcript.failureCode) return finish("defer", "Required action evidence exceeds the input budget. Reduce the request or expanded context before retrying.", undefined, transcript.failureCode);
   const controller = new AbortController();
-  const sessionSignal = ctx.signal;
+  const sessionSignal = o.signal;
   let timedOut = false;
   const abort = () => controller.abort();
   if (sessionSignal?.aborted) abort(); else sessionSignal?.addEventListener("abort", abort, { once: true });
@@ -40,7 +40,7 @@ export async function completeConversation(o: Options): Promise<ReviewResult> {
   try {
     const entries = structuredClone(ctx.sessionManager.getBranch());
     const parentId = ctx.sessionManager.getSessionId();
-    const parentChanged = () => !o.branchCurrent?.();
+    const parentChanged = () => o.branchCurrent?.() === false;
     const meta = await abortableOperation(o.resolve(ctx, config), controller.signal);
     const auth = await abortableOperation(resolveApiKeyAndHeaders(ctx, meta.model), controller.signal);
     const runtime = { ...meta, auth, sessionId: reviewerSessionId(ctx, config, meta.model, auth) };

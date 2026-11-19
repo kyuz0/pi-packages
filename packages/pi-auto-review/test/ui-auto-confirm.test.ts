@@ -53,6 +53,7 @@ async function runPrompt(options: {
   stageSurface?: string;
   surfaces?: readonly string[];
   clearAfterFactory?: boolean;
+  isCurrent?: () => boolean;
 }) {
   const decisions: unknown[] = [];
   const ctx = {
@@ -89,6 +90,7 @@ async function runPrompt(options: {
   confirmer.stage(
     options.stageId ?? "req-1",
     options.stageSurface ?? "external_directory",
+    options.isCurrent,
   );
   confirmer.handlePrompt(options.event, ctx as never);
   const decision = await ctx.ui.custom(
@@ -330,4 +332,11 @@ test("event without value or message is ignored", async () => {
     component: dialog(),
   });
   assert.deepEqual(result.decision, HUMAN_DENIED);
+});
+
+
+test("a stale staged child file review cannot confirm the root dialog", async () => {
+  const result = await runPrompt({ event: v26Prompt(), component: dialog(), isCurrent: () => false });
+  assert.deepEqual(result.decision, HUMAN_DENIED);
+  assert.equal(result.automaticEvidence, false);
 });

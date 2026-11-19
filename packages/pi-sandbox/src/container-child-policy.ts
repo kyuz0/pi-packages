@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readFileSync, existsSync } from 'node:fs';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { registerRequiredChildExtensions } from 'pi-subagents/required-child-extensions';
@@ -15,10 +16,32 @@ export default function childPolicy(pi: ExtensionAPI) {
     '/opt/pi-security/packages/pi-sandbox/src/container-child-policy.ts',
   ];
   let registration: ReturnType<typeof registerRequiredChildExtensions> | undefined;
-  pi.on('session_start', (_event, ctx) => {
+  const shared = globalThis as Record<symbol, unknown>;
+  const generations = (shared[Symbol.for('pi-subagents:native-approval-generations')] ??= new Map()) as Map<string, string>;
+  let owner: { sessionId: string; generation: string } | undefined;
+  function release() {
+    if (owner && generations.get(owner.sessionId) === owner.generation) generations.delete(owner.sessionId);
+    owner = undefined;
     registration?.dispose();
-    registration = registerRequiredChildExtensions({ sessionId: ctx.sessionManager.getSessionId(),
+    registration = undefined;
+  }
+  pi.on('session_start', (_event, ctx) => {
+    release();
+    const sessionId = ctx.sessionManager.getSessionId();
+    const children = shared[Symbol.for('pi-subagents:approval-child-sessions')] as ReadonlyMap<string, unknown> | undefined;
+    const isRoot = !children?.has(sessionId);
+    if (isRoot && generations.has(sessionId)) throw new Error('Another native approval owner is active for this session.');
+    registration = registerRequiredChildExtensions({ sessionId,
       requireForAllRunners: true, extensions: paths.map((path, index) => ({ id: 'container-policy-' + index, path })) });
+    if (isRoot) {
+      owner = { sessionId, generation: randomUUID() };
+      generations.set(sessionId, owner.generation);
+    }
+  });
+  pi.on('session_tree', event => {
+    if (!owner || event.oldLeafId === event.newLeafId) return;
+    owner.generation = randomUUID();
+    generations.set(owner.sessionId, owner.generation);
   });
   pi.on('before_agent_start', event => {
     let systemPrompt = event.systemPrompt;
@@ -31,5 +54,5 @@ export default function childPolicy(pi: ExtensionAPI) {
     systemPrompt += '\nSaved sandbox settings: ' + JSON.stringify(selected) + '. Use only enabled capabilities.';
     return { systemPrompt };
   });
-  pi.on('session_shutdown', () => { registration?.dispose(); registration = undefined; });
+  pi.on('session_shutdown', release);
 }

@@ -137,6 +137,7 @@ export type BoundaryBreakGlassAuthorization = {
 };
 
 export type BoundaryReviewerContext = {
+  signal?: AbortSignal;
   userOverride?: BoundaryUserOverride;
   delegated?: true;
 };

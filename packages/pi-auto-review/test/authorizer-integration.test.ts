@@ -3567,3 +3567,59 @@ test("automatic deferrals request evidence without contradicting the recovery ad
   assert.doesNotMatch(JSON.stringify(result),/Do not retry|Do not repeat/);
  } finally {instance.dispose();}
 });
+
+test("managed native file review uses the originating user and the child's working directory", async () => {
+  const previous = process.env.PI_SANDBOX_CONTAINER;
+  process.env.PI_SANDBOX_CONTAINER = "1";
+  const options = { retainedContext: true, reviewerConversation: true, retries: 0 };
+  const root = harness(allow, {
+    config: config(options), rpcUi: true,
+    contextEntries: [{ message: { role: "user", content: "ROOT_NATIVE_FILE_INSTRUCTION" } }],
+  });
+  try {
+    const forwarded = { forwarding: { requesterSessionId: "worker-file", requesterAgentName: "worker" },
+      [Symbol.for("pi-auto-review:forwarded-cwd")]: "/workspace/worker" };
+    await root.authorize("external_directory_read", forwarded);
+    assert.equal(root.modelContexts.length, 1);
+    const prompt = reviewerTranscript(root.modelContexts[0]).userPrompt;
+    assert.match(prompt, /ROOT_NATIVE_FILE_INSTRUCTION/);
+    assert.match(prompt, /parentOriginalMessages/);
+    assert.match(prompt, /\/workspace\/worker/);
+    assert.match(prompt, /worker-file/);
+
+    const missing = await root.authorize("external_directory_read", { forwarding: forwarded.forwarding });
+    assert.equal(missing.decision.approved, false);
+    assert.equal(missing.terminalCalls, 0);
+    assert.equal(root.modelContexts.length, 1);
+  } finally {
+    await root.dispose();
+    if (previous === undefined) delete process.env.PI_SANDBOX_CONTAINER;
+    else process.env.PI_SANDBOX_CONTAINER = previous;
+  }
+});
+
+test("a managed child cannot perform a local native review using its delegated task", async () => {
+  const previous = process.env.PI_SANDBOX_CONTAINER;
+  process.env.PI_SANDBOX_CONTAINER = "1";
+  const key = Symbol.for("pi-subagents:approval-child-sessions");
+  const shared = globalThis as Record<symbol, unknown>;
+  const oldChildren = shared[key];
+  shared[key] = new Map([["native-child", { rootSessionId: "native-root" }]]);
+  const instance = harness(allow, {
+    sessionId: "native-child",
+    config: config({ interactionMode: "automatic", retainedContext: true, reviewerConversation: true }),
+    contextEntries: [{ message: { role: "user", content: "DELEGATED_NATIVE_WORKER_TASK" } }],
+  });
+  try {
+    const result = await instance.authorize("external_directory_read");
+    assert.equal(result.decision.approved, false);
+    assert.equal(result.terminalCalls, 0);
+    assert.equal(instance.modelContexts.length, 0);
+    assert.match(JSON.stringify(result), /originating session reviewer/);
+  } finally {
+    await instance.dispose();
+    if (oldChildren === undefined) delete shared[key]; else shared[key] = oldChildren;
+    if (previous === undefined) delete process.env.PI_SANDBOX_CONTAINER;
+    else process.env.PI_SANDBOX_CONTAINER = previous;
+  }
+});

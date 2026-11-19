@@ -1,3 +1,4 @@
+import { managedChild } from "./managed-child.ts";
 import { trackReviewBranch } from "./review/retained-context.ts";
 import { reviewerFailure } from "./broker/reviewer-failure.ts";
 import { randomBytes } from "node:crypto";
@@ -329,6 +330,10 @@ export function createPiAutoReviewExtension(
     new BoundaryApprovalBroker({
       reviewer: async (request, reviewerContext) => {
         if (!context) throw new Error("review context is unavailable");
+        if (process.env.PI_SANDBOX_CONTAINER === "1" && managedChild(context.sessionManager.getSessionId())) {
+          return { outcome: "deny", riskLevel: "high", userAuthorization: "unknown", preflightBlocked: true,
+            rationale: "A delegated action requires the originating session reviewer." };
+        }
         // The host caps these native file tools at a human confirmation even
         // after model approval. Automatic mode cannot use that route. The
         // broker has already enforced hard denies before reaching this hook.
@@ -820,18 +825,34 @@ export function createPiAutoReviewExtension(
           const target = reviewTargetFromRequest(request);
           const reviewContext = context;
           const requestEpoch = registrationEpoch;
-          const scopeKey = currentTurnScope(reviewContext);
-          const isCurrent = managedAssisted ? trackRequest(reviewContext) : undefined;
+          const sessionId = reviewContext.sessionManager.getSessionId();
+          const delegated = process.env.PI_SANDBOX_CONTAINER === "1" && details.forwarding != null;
+          if (delegated && (!request.requesterSessionId || request.requesterSessionId === sessionId)) {
+            return { kind: "deny", reason: "The delegated permission request has no distinct child session." };
+          }
+          if (delegated && !request.cwd.startsWith("/")) {
+            return { kind: "deny", reason: "The delegated permission request has no verified working directory." };
+          }
+          const turnScope = currentTurnScope(reviewContext);
+          const scopeKey = delegated ? `${turnScope}:child:${request.requesterSessionId}` : turnScope;
+          const delegatedSignal = delegated
+            ? Object.getOwnPropertyDescriptor(details, Symbol.for("pi-auto-review:forwarded-signal"))?.value as AbortSignal | undefined
+            : undefined;
+          const signal = delegatedSignal && reviewContext.signal ? AbortSignal.any([delegatedSignal, reviewContext.signal])
+            : delegatedSignal ?? reviewContext.signal;
+          const branchCurrent = managedAssisted || delegated ? trackRequest(reviewContext, delegated) : undefined;
+          const isCurrent = branchCurrent && (() => !signal?.aborted && branchCurrent());
           const widgetGeneration = reviewWidget.begin(request.id, reviewContext, {
             surface,
             target,
             model: config.model === "current" ? reviewContext.model?.id : config.model,
           });
           const decision = await broker.review(request, {
-            sessionId: reviewContext.sessionManager.getSessionId(),
+            sessionId,
+            ...(delegated ? { delegated: true } : {}),
             scopeKey,
             isCurrent,
-            signal: reviewContext.signal,
+            signal,
             issueGrant: false,
           });
           const result = reviewResults.get(request.id);
@@ -846,7 +867,7 @@ export function createPiAutoReviewExtension(
             config.interactionMode === "interactive" && allowCapped &&
             (reviewContext.mode === "tui" || reviewContext.mode === "rpc") &&
             reviewContext.hasUI &&
-            uiAutoConfirmer.stage(request.id, surface);
+            uiAutoConfirmer.stage(request.id, surface, delegated ? isCurrent : undefined);
 
           let userOutcome: UserReviewOutcome;
           if (decision.kind === "deny" && decision.denialSource === "circuit-breaker") {

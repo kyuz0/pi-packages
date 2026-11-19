@@ -65,6 +65,9 @@ export async function complete(
   observe?: (event: ReviewerTelemetryEvent) => void,
 ): Promise<ReviewResult> {
   const started = Date.now();
+  const sessionSignal = ctx.signal;
+  const signal = reviewerContext?.signal && sessionSignal ? AbortSignal.any([reviewerContext.signal, sessionSignal])
+    : reviewerContext?.signal ?? sessionSignal;
   const rawBranch = config.retainedContext ? ctx.sessionManager.getBranch() : undefined;
   const branchCurrent = rawBranch && trackReviewBranch(ctx.sessionManager, config.trustedQuestionTools, reviewerContext?.delegated, rawBranch);
   const legacyTranscript = buildClassifierTranscript(
@@ -138,12 +141,12 @@ export async function complete(
   }
   const deadlineAt = started + config.timeoutMs;
   if (config.reviewerConversation) {
-    return completeConversation({ ctx, config, request, transcript, preflight, sharedContext, started, resolve, observe, branchCurrent });
+    return completeConversation({ ctx, config, request, transcript, preflight, sharedContext, started, resolve, observe, branchCurrent, signal });
   }
   const controller = new AbortController();
   const onSessionAbort = () => controller.abort();
-  if (ctx.signal?.aborted) controller.abort();
-  else ctx.signal?.addEventListener("abort", onSessionAbort, { once: true });
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener("abort", onSessionAbort, { once: true });
   let timeoutFired = false;
   const timeout = setTimeout(() => {
     timeoutFired = true;
@@ -351,7 +354,7 @@ export async function complete(
     throw new ReviewExecutionError(lastErrorClass, summary());
   } finally {
     clearTimeout(timeout);
-    ctx.signal?.removeEventListener("abort", onSessionAbort);
+    signal?.removeEventListener("abort", onSessionAbort);
   }
 }
 
