@@ -100,3 +100,65 @@ test("a pending managed confirmation requires a current and uniquely registered 
     assert.equal(decision.confirmation.isCurrent(), false);
   } finally { end(); }
 });
+
+test("a delegated grant is bound to its requester and the originating root branch through consumption", async () => {
+  let rootBranch = "first";
+  let reviews = 0;
+  const end = publishBoundaryBroker(new BoundaryApprovalBroker({
+    reviewer: async (_request, options) => {
+      assert.equal(options?.delegated, true);
+      reviews++;
+      return review("marker authorized");
+    },
+  }), () => "root", () => {
+    const initial = rootBranch;
+    return () => initial === rootBranch;
+  });
+  try {
+    const service = getBoundaryBroker()!;
+    const childAction = { ...request, requesterSessionId: "child-a" };
+    const routed = { ...context("root"), delegated: true as const };
+    assert.equal((await service.review(request, routed)).kind, "deny");
+    assert.equal((await service.review({ ...request, requesterSessionId: "root" }, routed)).kind, "deny");
+    const first = await service.review(childAction, routed);
+    assert.ok(first.kind === "allow" && first.grant);
+    assert.equal(service.consumeGrant({ ...childAction, requesterSessionId: "child-b" }, "root", first.grant.token), false);
+    assert.equal(service.consumeGrant({ ...childAction, id: "other-request" }, "root", first.grant.token), false);
+    assert.equal(service.consumeGrant({ ...childAction, toolCallId: "other-call" }, "root", first.grant.token), false);
+    rootBranch = "updated instructions";
+    assert.equal(service.consumeGrant(childAction, "root", first.grant.token), false);
+    rootBranch = "first";
+    assert.equal(service.consumeGrant(childAction, "root", first.grant.token), false);
+    const fresh = await service.review(childAction, routed);
+    assert.ok(fresh.kind === "allow" && fresh.grant);
+    assert.equal(service.consumeGrant(childAction, "root", fresh.grant.token), true);
+    assert.equal(service.consumeGrant(childAction, "root", fresh.grant.token), false);
+    assert.equal(reviews, 2);
+  } finally { end(); }
+});
+
+test("a delayed delegated manual answer becomes stale when root instructions change or the child closes", async () => {
+  let branch = "original";
+  const manual = {
+    review: async () => ({ kind: "defer" as const, review: { ...review("manual"), outcome: "defer" as const } }),
+    consumeGrant: () => false,
+    clear() {},
+  };
+  const end = publishBoundaryBroker(manual, () => "root", () => {
+    const atStart = branch;
+    return () => branch === atStart;
+  });
+  try {
+    const signal = new AbortController();
+    const action = { ...request, requesterSessionId: "child" };
+    const route = { ...context("root"), signal: signal.signal, delegated: true as const };
+    const first = await getBoundaryBroker()!.review(action, route);
+    assert.ok(first.kind === "defer" && first.isCurrent?.());
+    branch = "revised";
+    assert.equal(first.isCurrent!(), false);
+    const second = await getBoundaryBroker()!.review(action, route);
+    assert.ok(second.kind === "defer" && second.isCurrent?.());
+    signal.abort();
+    assert.equal(second.isCurrent!(), false);
+  } finally { end(); }
+});

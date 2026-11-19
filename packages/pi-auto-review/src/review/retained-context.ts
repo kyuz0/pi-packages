@@ -85,7 +85,7 @@ export function retainContext(entries: readonly unknown[], userBytes = 98_304, a
     ...(omittedNewestUserMessage ? { newestUserOmissionReason: newestUser?.incomplete ? "unsupported-content" as const : "input-budget" as const } : {}),
     source: "active-session-branch", provenance: "session-role-not-independent-human-attestation" };
 }
-export function retainedSnapshot(sessionId: string, entries: readonly unknown[], trustedQuestionTools: readonly string[] = []): string {
+export function retainedSnapshot(sessionId: string, entries: readonly unknown[], trustedQuestionTools: readonly string[] = [], delegated = false): string {
   // Compaction appends a summary but preserves original branch messages. Hash
   // original instruction evidence, never summaries or observational entries.
   // Full user contents and IDs detect edits, new restrictions and branch changes.
@@ -99,7 +99,27 @@ export function retainedSnapshot(sessionId: string, entries: readonly unknown[],
       return [{ id: entry.id, message: { role: message.role, content: visibleText(message.content).text } }];
     return [];
   });
+  // A parent can finish its turn while background children are awaiting review.
+  // Assistant replies become authorization context only when a later user message can refer to them.
+  if (delegated) {
+    while (evidence.at(-1)?.message.role === "assistant") evidence.pop();
+  }
   return createHash("sha256").update(sessionId).update(JSON.stringify(evidence)).digest("hex");
+}
+
+export function trackReviewBranch(
+  session: { getSessionId(): string; getBranch(): readonly unknown[] },
+  trustedQuestionTools: readonly string[] = [],
+  delegated = false,
+  initial = session.getBranch(),
+): () => boolean {
+  const snapshot = retainedSnapshot(session.getSessionId(), initial, trustedQuestionTools, delegated);
+  const anchor = delegated ? object(initial.at(-1))?.id : undefined;
+  return () => {
+    const branch = session.getBranch();
+    if (anchor !== undefined && !branch.some(entry => object(entry)?.id === anchor)) return false;
+    return snapshot === retainedSnapshot(session.getSessionId(), branch, trustedQuestionTools, delegated);
+  };
 }
 export function withRetainedContext(transcript: TranscriptResult, entries: readonly unknown[], maxReviewerInputTokens = 32_768, trustedQuestionTools: readonly string[] = []): TranscriptResult {
   // This is only a selection bound. The full serialized request and policy

@@ -9,6 +9,48 @@ const model: ReviewerMeta["model"]={provider:"fixture",id:"fixture",name:"fixtur
 const u=(id:string,content:string)=>({id,type:"message",message:{role:"user",content}});
 const request={id:"req",source:"permission-system",surface:"bash_escalated",operation:"execute",command:"git push",fullCommand:"git push",cwd:"/workspace"};
 const decision={outcome:"allow",risk_level:"medium",user_authorization:"high",rationale:"Fixture allows."};
+test("delegated review requires retained user instructions from the selected root session", async () => {
+  const entries = [{ id: "parent-delegation", type: "message", message: {
+    role: "assistant", content: [{ type: "toolCall", id: "child-task", name: "subagent", arguments: { task: "Check the fixture marker" } }],
+  } }];
+  const ctx = { sessionManager: { getSessionId: () => "root", getBranch: () => entries, buildContextEntries: () => entries } } as unknown as ExtensionContext;
+  for (const reviewerConversation of [false, true]) {
+    const result = await complete(ctx, { ...DEFAULT_CONFIG, reviewerConversation }, { ...request, requesterSessionId: "child" },
+      { delegated: true }, () => { throw new Error("Reviewer must not run without the root instructions"); });
+    assert.equal(result.attempts, 0);
+    assert.equal(result.decision.outcome, "defer");
+    assert.equal(result.decision.user_authorization, "unknown");
+    assert.match(result.decision.rationale, /originating session has no retained user instructions/);
+  }
+});
+
+for (const reviewerConversation of [true, false]) {
+  for (const change of ["parent finish", "new restriction", "sibling branch"]) {
+    test(`delegated review follows the root branch during ${change} (conversation=${reviewerConversation})`, async () => {
+      const user = u("root-instruction", "Read the fixture marker.");
+      const initial = { id: "root-call", type: "message", message: {
+        role: "assistant", content: [{ type: "toolCall", id: "call", name: "subagent", arguments: { task: "Delegated fixture task" } }],
+      } };
+      const parentFinished = { id: "finished", type: "message", message: { role: "assistant", content: "The worker is running." } };
+      let branch: unknown[] = [user, initial];
+      const ctx = { sessionManager: { getSessionId: () => "root", getBranch: () => branch, buildContextEntries: () => branch },
+        modelRegistry: { getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "fixture" }) } } as unknown as ExtensionContext;
+      const streamSimple = ((_model: unknown, input: { messages: unknown[] }) => ({ result: async () => {
+        const wire = JSON.stringify(input.messages);
+        assert.match(wire, /Read the fixture marker/);
+        if (change === "parent finish") branch.push(parentFinished);
+        if (change === "new restriction") branch.push(u("changed", "Stop reading the marker."));
+        if (change === "sibling branch") branch = [user, parentFinished];
+        return { role: "assistant", stopReason: "stop", content: [{ type: "text", text: JSON.stringify(decision) }] };
+      } })) as unknown as NonNullable<ReviewerMeta["streamSimple"]>;
+      const result = await complete(ctx, { ...DEFAULT_CONFIG, reviewerConversation }, {
+        ...request, command: "printf fixture", fullCommand: "printf fixture", requesterSessionId: "child",
+      }, { delegated: true }, async () => ({ model, streamSimple }));
+      assert.equal(result.attempts, 1);
+      assert.equal(result.decision.outcome, change === "parent finish" ? "allow" : "defer");
+    });
+  }
+}
 for(const change of ["none","restriction","branch","same-id-edit","session"]){
  test(`actual complete() revalidates before allow: ${change}`,async()=>{
   let entries=[u("1","Push the docs branch.")],session="a";

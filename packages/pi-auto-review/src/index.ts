@@ -1,4 +1,4 @@
-import { retainedSnapshot } from "./review/retained-context.ts";
+import { trackReviewBranch } from "./review/retained-context.ts";
 import { reviewerFailure } from "./broker/reviewer-failure.ts";
 import { randomBytes } from "node:crypto";
 
@@ -314,18 +314,15 @@ export function createPiAutoReviewExtension(
   const managedAssisted = process.env.PI_SANDBOX_CONTAINER === "1" &&
     process.env.SANDBOX_APPROVAL_MODE === "assisted";
 
-  const trackRequest = (ctx: ExtensionContext): (() => boolean) => {
+  const trackRequest = (ctx: ExtensionContext, delegated = false): (() => boolean) => {
     const requestConfig = config;
     const signal = ctx.signal;
     const epoch = registrationEpoch;
     const currentModel = () => ctx.model && `${ctx.model.provider}/${ctx.model.id}`;
     const startingModel = currentModel();
-    const snapshot = () => retainedSnapshot(
-      ctx.sessionManager.getSessionId(), ctx.sessionManager.getBranch(), requestConfig.trustedQuestionTools,
-    );
-    const initial = snapshot();
+    const branchCurrent = trackReviewBranch(ctx.sessionManager, requestConfig.trustedQuestionTools, delegated);
     return () => !shuttingDown && !signal?.aborted && epoch === registrationEpoch &&
-      config === requestConfig && currentModel() === startingModel && snapshot() === initial;
+      config === requestConfig && currentModel() === startingModel && branchCurrent();
   };
 
   const createBroker = (): BoundaryApprovalBroker =>
@@ -714,7 +711,9 @@ export function createPiAutoReviewExtension(
       disposeBrokerService = publishBoundaryBroker(
         broker,
         () => ctx.sessionManager.getSessionId(),
-        managedAssisted ? () => context ? trackRequest(context) : () => false : undefined,
+        (review) => managedAssisted || review.delegated
+          ? (context ? trackRequest(context, review.delegated) : () => false)
+          : undefined,
       );
     } catch (error) {
       context = undefined;

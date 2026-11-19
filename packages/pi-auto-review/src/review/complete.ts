@@ -1,4 +1,4 @@
-import { withRetainedContext, retainedSnapshot } from "./retained-context.ts";
+import { withRetainedContext, trackReviewBranch } from "./retained-context.ts";
 import { completeConversation } from "./conversation.ts";
 import {
   ReviewExecutionError,
@@ -66,7 +66,7 @@ export async function complete(
 ): Promise<ReviewResult> {
   const started = Date.now();
   const rawBranch = config.retainedContext ? ctx.sessionManager.getBranch() : undefined;
-  const snapshot = rawBranch ? retainedSnapshot(ctx.sessionManager.getSessionId(), rawBranch, config.trustedQuestionTools) : undefined;
+  const branchCurrent = rawBranch && trackReviewBranch(ctx.sessionManager, config.trustedQuestionTools, reviewerContext?.delegated, rawBranch);
   const legacyTranscript = buildClassifierTranscript(
     ctx.sessionManager.buildContextEntries(),
     config,
@@ -101,7 +101,11 @@ export async function complete(
   // incomplete expansion cannot be reviewed, even with a trusted
   // reviewer-retry override. The older display-truncation fallback can still
   // be lifted by that override.
-  const deferralReason = transcript.retainedContext?.omittedNewestUserMessage
+  const missingRootInstructions = reviewerContext?.delegated &&
+    !transcript.retainedContext?.messages.some(message => message.role === "user");
+  const deferralReason = missingRootInstructions
+    ? "The originating session has no retained user instructions for this delegated action."
+    : transcript.retainedContext?.omittedNewestUserMessage
     ? transcript.retainedContext.newestUserOmissionReason === "unsupported-content"
       ? "The newest user message contains unsupported content. Its instructions could not be retained for review."
       : `The newest user message cannot be retained within the reviewer input budget (${config.maxReviewerInputTokens} estimated tokens). Shorten the message or reduce expanded context before retrying.`
@@ -134,7 +138,7 @@ export async function complete(
   }
   const deadlineAt = started + config.timeoutMs;
   if (config.reviewerConversation) {
-    return completeConversation({ ctx, config, request, transcript, preflight, sharedContext, started, resolve, observe });
+    return completeConversation({ ctx, config, request, transcript, preflight, sharedContext, started, resolve, observe, branchCurrent });
   }
   const controller = new AbortController();
   const onSessionAbort = () => controller.abort();
@@ -268,7 +272,7 @@ export async function complete(
         }
         try {
           decision = parseDecision(text);
-          if (decision.outcome === "allow" && snapshot && snapshot !== retainedSnapshot(ctx.sessionManager.getSessionId(), ctx.sessionManager.getBranch(), config.trustedQuestionTools)) {
+          if (decision.outcome === "allow" && branchCurrent && !branchCurrent()) {
             decision = { outcome: "defer", risk_level: "high", user_authorization: "unknown", rationale: "The session changed during review; review the action again with current instructions." };
           }
         } catch (error) {

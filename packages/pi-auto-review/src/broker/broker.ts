@@ -84,6 +84,8 @@ export class BoundaryApprovalBroker {
     assertRequest(request);
     const generation = this.#generation;
     const isCurrent = () => generation === this.#generation && !context.signal?.aborted && (context.isCurrent?.() ?? true);
+    // The remote consumer may claim an issued grant after the root conversation has changed.
+    const grantIsCurrent = context.delegated ? isCurrent : undefined;
     const hardDeny = this.#hardDeny?.(request);
     if (hardDeny) {
       const breaker = this.#breaker.record(context.scopeKey, true);
@@ -123,7 +125,7 @@ export class BoundaryApprovalBroker {
         rationale: "A human completed break-glass confirmation for this exact request.",
       };
       const grant = context.issueGrant
-        ? this.#grants.issue(request, context.sessionId)
+        ? this.#grants.issue(request, context.sessionId, grantIsCurrent)
         : undefined;
       this.audit("break_glass_consumed", request, {
         originalRequestId: breakGlass.originalRequestId,
@@ -169,7 +171,7 @@ export class BoundaryApprovalBroker {
 
     let review: BoundaryReview;
     try {
-      review = await this.#reviewer(request, { userOverride });
+      review = await this.#reviewer(request, { userOverride, ...(context.delegated ? { delegated: true } : {}) });
     } catch (error) {
       const { reason, errorClass } = reviewerFailure(error);
       this.audit("review_failure", request, { errorClass });
@@ -198,8 +200,10 @@ export class BoundaryApprovalBroker {
     }
 
     this.audit("review_decision", request, review);
+    if ((context.delegated || this.#confirmReviewerDenials) && !isCurrent()) {
+      return this.unavailable("The request changed during review. No permission was granted.");
+    }
     if (this.#confirmReviewerDenials) {
-      if (!isCurrent()) return this.unavailable("The request changed during review. No permission was granted.");
       if (review.preflightBlocked) return this.unavailable(review.rationale);
       if (review.outcome !== "allow") {
         return {
@@ -245,7 +249,7 @@ export class BoundaryApprovalBroker {
     if (review.outcome === "defer") return { kind: "defer", review };
 
     const grant = context.issueGrant
-      ? this.#grants.issue(request, context.sessionId)
+      ? this.#grants.issue(request, context.sessionId, grantIsCurrent)
       : undefined;
     if (grant) {
       this.audit("grant_issued", request, {

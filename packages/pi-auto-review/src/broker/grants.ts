@@ -49,6 +49,7 @@ export function boundaryRequestHash(request: BoundaryRequest): string {
 
 type StoredGrant = Omit<BoundaryGrant, "usesRemaining"> & {
   usesRemaining: number;
+  delegated?: { requestId: string; toolCallId?: string; isCurrent: () => boolean };
 };
 
 export class OneShotGrantStore {
@@ -64,7 +65,7 @@ export class OneShotGrantStore {
     this.now = now;
   }
 
-  issue(request: BoundaryRequest, sessionId: string): BoundaryGrant {
+  issue(request: BoundaryRequest, sessionId: string, isCurrent?: () => boolean): BoundaryGrant {
     this.prune();
     const grant: BoundaryGrant = {
       token: randomUUID(),
@@ -73,7 +74,10 @@ export class OneShotGrantStore {
       expiresAt: this.now() + this.ttlMs,
       usesRemaining: 1,
     };
-    this.#grants.set(grant.token, { ...grant });
+    this.#grants.set(grant.token, {
+      ...grant,
+      ...(isCurrent ? { delegated: { requestId: request.id, toolCallId: request.toolCallId, isCurrent } } : {}),
+    });
     return grant;
   }
 
@@ -87,13 +91,14 @@ export class OneShotGrantStore {
     if (
       !grant ||
       grant.sessionId !== sessionId ||
+      (grant.delegated && (grant.delegated.requestId !== request.id || grant.delegated.toolCallId !== request.toolCallId)) ||
       grant.requestHash !== boundaryRequestHash(request) ||
       grant.usesRemaining !== 1
     ) {
       return false;
     }
     this.#grants.delete(token);
-    return true;
+    return grant.delegated?.isCurrent() ?? true;
   }
 
   clear(): void {

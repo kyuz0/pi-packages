@@ -2,6 +2,7 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { publishBoundaryBroker, type BoundaryDecision } from './broker/index.ts';
 import { notifyApprovalMode } from './approval-mode.ts';
+import { trackReviewBranch } from './review/retained-context.ts';
 
 export default function approvalMode(pi: ExtensionAPI) {
   const mode = process.env.SANDBOX_APPROVAL_MODE;
@@ -21,7 +22,10 @@ export default function approvalMode(pi: ExtensionAPI) {
   pi.on('session_start', (event, ctx) => {
     dispose?.();
     const sessionId = ctx.sessionManager.getSessionId();
-    dispose = publishBoundaryBroker(service, () => sessionId);
+    dispose = publishBoundaryBroker(service, () => sessionId, (review) => {
+      if (!review.delegated) return undefined;
+      return trackReviewBranch(ctx.sessionManager, [], true);
+    });
     notifyApprovalMode(event, ctx, mode);
   });
   pi.on('session_shutdown', () => { dispose?.(); dispose = undefined; });

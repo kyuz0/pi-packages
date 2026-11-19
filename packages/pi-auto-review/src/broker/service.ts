@@ -12,7 +12,7 @@ type SessionBroker = Pick<BoundaryApprovalBroker, "review" | "consumeGrant" | "c
 type Registration = {
   broker: SessionBroker;
   sessionId: () => string;
-  trackRequest?: () => () => boolean;
+  trackRequest?: (context: BoundaryReviewContext) => (() => boolean) | undefined;
 };
 type Registry = { registrations: Set<Registration>; service: BoundaryApprovalBrokerService };
 
@@ -42,14 +42,15 @@ export function publishBoundaryBroker(
       review: async (request, context) => {
         const registration = select(context.sessionId);
         if (!registration) return unavailable();
-        const stillCurrent = registration.trackRequest?.();
-        const decision = await registration.broker.review(request, {
-          ...context,
-          isCurrent: () => select(context.sessionId) === registration &&
-            (stillCurrent?.() ?? true) && (context.isCurrent?.() ?? true),
-        });
+        const stillCurrent = registration.trackRequest?.(context);
+        if (context.delegated && (!stillCurrent || !request.requesterSessionId ||
+            request.requesterSessionId === context.sessionId)) return unavailable();
+        const isCurrent = () => select(context.sessionId) === registration &&
+          !context.signal?.aborted && (stillCurrent?.() ?? true) && (context.isCurrent?.() ?? true);
+        const decision = await registration.broker.review(request, { ...context, isCurrent });
         // Disposal/replacement during a model call revokes its eventual result.
-        return select(context.sessionId) === registration ? decision : unavailable();
+        if (select(context.sessionId) !== registration || (context.delegated && !isCurrent())) return unavailable();
+        return context.delegated && decision.kind === "defer" ? { ...decision, isCurrent } : decision;
       },
       consumeGrant: (request, id, token) => select(id)?.broker.consumeGrant(request, id, token) ?? false,
     } };

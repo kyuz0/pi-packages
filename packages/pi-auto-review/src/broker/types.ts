@@ -112,11 +112,15 @@ export type BoundaryDecision =
       kind: "defer";
       review: BoundaryReview;
       confirmation?: ReviewerConfirmation;
+      /** A root host must recheck this when resolving a delegated human decision. */
+      isCurrent?: () => boolean;
     };
 
 export type BoundaryReviewContext = {
   sessionId: string;
   scopeKey: string;
+  /** Set by the host when a live root session reviews a delegated child action. */
+  delegated?: true;
   issueGrant?: boolean;
   signal?: AbortSignal;
   isCurrent?: () => boolean;
@@ -134,6 +138,7 @@ export type BoundaryBreakGlassAuthorization = {
 
 export type BoundaryReviewerContext = {
   userOverride?: BoundaryUserOverride;
+  delegated?: true;
 };
 
 export type RecentBoundaryDenial = {

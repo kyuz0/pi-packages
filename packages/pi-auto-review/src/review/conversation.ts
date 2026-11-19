@@ -5,7 +5,6 @@ import type { BoundaryRequest } from "../broker/index.ts";
 import { parseDecision, type TranscriptResult } from "../policy.ts";
 import { preflightPart, textFromAssistant, conversationAction } from "./input.ts";
 import { reviewerConversations, digest, providerIdentity } from "./conversation-store.ts";
-import { retainedSnapshot } from "./retained-context.ts";
 import { FORMAT_RETRY_INSTRUCTION } from "./consts.ts";
 import { conversationPrompt } from "./prompts.ts";
 import { modelCall, observedUsage, resolveApiKeyAndHeaders, reviewerSessionId, abortableOperation, abortableDelay, classifyProviderFailure, normalizedStopReason, isRetryableError, isFormatError, parseErrorClass, retryDelayMs, type ProviderAttemptMetadata, type ReviewerResolver } from "./provider.ts";
@@ -13,7 +12,7 @@ import type { Config, ReviewPreflight, ReviewResult, ReviewExecutionSummary, Rev
 
 export { conversationPrompt } from "./prompts.ts";
 
-type Options = { ctx: ExtensionContext; config: Config; request: BoundaryRequest; transcript: TranscriptResult; preflight: ReviewPreflight; sharedContext: string; started: number; resolve: ReviewerResolver; observe?: (event: ReviewerTelemetryEvent) => void };
+type Options = { ctx: ExtensionContext; config: Config; request: BoundaryRequest; transcript: TranscriptResult; preflight: ReviewPreflight; sharedContext: string; started: number; resolve: ReviewerResolver; observe?: (event: ReviewerTelemetryEvent) => void; branchCurrent?: () => boolean };
 export async function completeConversation(o: Options): Promise<ReviewResult> {
   const { ctx, config, request, transcript, preflight, started } = o;
   const summary: ReviewExecutionSummary = { attempts: [], errorCounts: {}, durationMs: 0, transcript, preflight };
@@ -41,8 +40,7 @@ export async function completeConversation(o: Options): Promise<ReviewResult> {
   try {
     const entries = structuredClone(ctx.sessionManager.getBranch());
     const parentId = ctx.sessionManager.getSessionId();
-    const snapshot = retainedSnapshot(parentId, entries, config.trustedQuestionTools);
-    const parentChanged = () => snapshot !== retainedSnapshot(ctx.sessionManager.getSessionId(), ctx.sessionManager.getBranch(), config.trustedQuestionTools);
+    const parentChanged = () => !o.branchCurrent?.();
     const meta = await abortableOperation(o.resolve(ctx, config), controller.signal);
     const auth = await abortableOperation(resolveApiKeyAndHeaders(ctx, meta.model), controller.signal);
     const runtime = { ...meta, auth, sessionId: reviewerSessionId(ctx, config, meta.model, auth) };

@@ -341,6 +341,8 @@ Symbol.for("pi-auto-review:boundary-approval-broker")
 
 Each live session registers its own broker. Reviews and grants are routed by session ID; closing one session leaves other sessions available. Unknown or ambiguous session IDs are denied.
 
+A host routing a delegated action supplies the live root session ID in the review context, sets `delegated: true` and places the child session ID in `request.requesterSessionId`. The reviewer uses the originating conversation's user instructions. The host consumes an allowed grant against the original request immediately before authorizing execution. For a human decision, it checks the returned `isCurrent()` when showing the prompt and again when accepting the answer. Switching branches, changing the user's instructions or cancelling the request invalidates the pending decision.
+
 Adapters should use the exported helper:
 
 ```ts
