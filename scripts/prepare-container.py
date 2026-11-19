@@ -66,6 +66,7 @@ with remote('bubblewrap') as source, tempfile.TemporaryDirectory() as tmp:
 
 # Fail closed on dependency updates: every edit must match exactly once.
 assert json.loads((modules / '@anthropic-ai/sandbox-runtime/package.json').read_text())['version'] == '0.0.79'
+assert json.loads((modules / '@earendil-works/pi-coding-agent/package.json').read_text())['version'] == '1.2.0'
 assert json.loads((modules / 'pi-subagents/package.json').read_text())['version'] == '0.78.0'
 assert json.loads((modules / '@gotgenes/pi-permission-system/package.json').read_text())['version'] == '40.2.0'
 replace('@gotgenes/pi-permission-system/src/config/config-paths.ts',
@@ -78,7 +79,7 @@ replace('@gotgenes/pi-permission-system/src/config/config-loader.ts',
 # assisted mode may ask for one-time consent to a valid reviewer verdict.
 for patch in ('permission-system-review.patch', 'permission-system-copy.patch',
               'pi-subagents-approval-origin.patch', 'pi-subagents-display-names.patch',
-              'permission-system-subagents.patch'):
+              'pi-subagents-parent-wake.patch', 'permission-system-subagents.patch'):
     subprocess.run(['git', 'apply', str(root / 'scripts' / patch)], cwd=root, check=True)
 replace('@anthropic-ai/sandbox-runtime/dist/sandbox/linux-sandbox-utils.js',
         "bwrapArgs.push('--dev', '/dev');",

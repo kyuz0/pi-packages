@@ -1,0 +1,25 @@
+--- a/node_modules/pi-subagents/src/shared/parent-wake.js
++++ b/node_modules/pi-subagents/src/shared/parent-wake.js
+@@ -44,8 +44,8 @@
+             pi.sendMessage(message, { triggerTurn: false });
+             if (!reserved()) {
+                 reservation().sentAt = now();
+-                // Steer queues the wake if another prompt starts the run first.
+-                pi.sendUserMessage(PARENT_WAKE_TEXT, { deliverAs: "steer" });
++                // Pinned Pi runs before_agent_start for custom wakes and steers them if a turn starts first.
++                pi.sendMessage({ customType: "subagent-wake", content: PARENT_WAKE_TEXT, display: false }, { triggerTurn: true, deliverAs: "steer" });
+             }
+             return true;
+         },
+--- a/node_modules/pi-subagents/src/shared/parent-wake.d.ts
++++ b/node_modules/pi-subagents/src/shared/parent-wake.d.ts
+@@ -3,8 +3,7 @@
+ export interface ParentWake {
+     /**
+      * pi.sendMessage, except that a turn-triggering message to an idle parent is appended and the
+-     * turn is started with sendUserMessage. Pi starts a sendMessage-triggered run without
+-     * before_agent_start (earendil-works/pi#5581), so that run drops every hook-set prompt section.
++     * next turn starts with one custom wake. The session retains its extension provenance.
+      * Returns true when the message was appended that way: Pi emits no extension message_start for it.
+      * After userAborted() and until the next run starts, a turn-triggering message is only appended.
+      */
