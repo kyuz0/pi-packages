@@ -13,6 +13,7 @@ export default function childPolicy(pi: ExtensionAPI) {
     '/opt/pi-security/node_modules/@gotgenes/pi-permission-system/src/index.ts',
     ...(inner && selected.approval !== 'off' ? ['/opt/pi-security/packages/pi-reviewed-escalation/index.ts'] : []),
     ...(inner ? ['/opt/pi-security/packages/pi-sandbox/src/index.ts'] : []),
+    ...(selected.compaction_recall !== 'off' ? ['/opt/pi-compaction-recall/node_modules/pi-compaction-recall/src/index.ts'] : []),
     '/opt/pi-security/packages/pi-sandbox/src/container-child-policy.ts',
   ];
   let registration: ReturnType<typeof registerRequiredChildExtensions> | undefined;
