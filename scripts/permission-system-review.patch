@@ -193,7 +193,7 @@
 +    const status = confirmation.outcome === "deny" ? "Reviewer rejected this action" : "Reviewer left the decision to you";
 +    const reason = confirmation.reason.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, "");
 +    const selected = await ui.select(
-+      `${title}\n${message}\n${status}.\n${reason}`,
++      `${title}\n\n${status}.\n${reason}\n\nRequest details\n${message}`,
 +      [allowOnce, "Deny"],
 +      dialogOptions,
 +    );

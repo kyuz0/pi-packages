@@ -13,7 +13,8 @@ for (const outcome of ['allow','deny','defer']) {
     const cwd=mkdtempSync('/tmp/escalation-execution-cwd-');
     const outside=mkdtempSync('/tmp/escalation-execution-outside-');
     const file=join(outside,'probe');
-    const command=`echo execution-ok > '${file}'`;
+    const command = `# Justification: part of the command
+echo execution-ok > '${file}'`;
     let dispose;
     let prompted=false;
     try {
@@ -29,9 +30,14 @@ for (const outcome of ['allow','deny','defer']) {
       assert.ok(tool);
       const ctx={cwd,sessionManager:{getSessionId(){return 'test-session';},getSessionFile(){return undefined;}},hasUI:true,ui:{select:async(title,choices)=>{
         assert.equal(outcome,'defer','allow and deny must never ask a user');
-        assert.ok(title.includes(command));
-        assert.ok(title.includes(cwd));
-        assert.match(title,/OUTSIDE the sandbox/);
+        assert.equal(title, [
+          "Run this exact command outside the sandbox?",
+          `Working directory: ${cwd}`,
+          "Reviewer\nIsolated test decision.",
+          `Command\n${command}`,
+          "Justification\nDisposable outside-workspace test.",
+          "Execution scope\nThis uses the host filesystem, credentials, network and sockets.",
+        ].join("\n\n"));
         assert.equal(existsSync(file),false,'host must not run before human approval');
         prompted=true;
         return choices[0];

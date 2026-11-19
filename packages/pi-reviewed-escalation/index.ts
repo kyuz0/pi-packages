@@ -47,11 +47,25 @@ export default function reviewedEscalation(pi: ExtensionAPI): void {
         signal,
         isCurrent: () => !signal?.aborted && turn === requestTurn && ctx.sessionManager.getSessionId() === sessionId,
         confirm: ctx.hasUI ? async (request, rationale, confirmation) => {
-          const reason = confirmation
-            ? `\n${confirmation.outcome === "deny" ? "The reviewer rejected this command." : "The reviewer left the decision to you."}\n${rationale}`
-            : mode === "manual" ? "" : `\nReviewer: ${rationale}`;
+          const title = container
+            ? "Run this exact command outside the inner sandbox?"
+            : "Run this exact command outside the sandbox?";
+          const sections = [title, `Working directory: ${request.cwd}`];
+          if (confirmation) {
+            const verdict = confirmation.outcome === "deny"
+              ? "The reviewer rejected this command."
+              : "The reviewer left the decision to you.";
+            sections.push(`${verdict}\n${rationale}`);
+          } else if (mode !== "manual") {
+            sections.push(`Reviewer\n${rationale}`);
+          }
+          sections.push(
+            `Command\n${request.command}`,
+            `Justification\n${justification}`,
+            `Execution scope\nThis uses the ${boundary} filesystem, credentials, network and sockets.`,
+          );
           const choice = await ctx.ui.select(
-            `Run this exact command OUTSIDE the sandbox?\nWorking directory: ${request.cwd}\nCommand: ${request.command}\nJustification: ${justification}${reason}\nThis uses the ${boundary} filesystem, credentials, network and sockets.`,
+            sections.join("\n\n"),
             ["Allow this exact command once", "Deny"],
             { signal },
           );
