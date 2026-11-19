@@ -3623,3 +3623,33 @@ test("a managed child cannot perform a local native review using its delegated t
     else process.env.PI_SANDBOX_CONTAINER = previous;
   }
 });
+
+test("cancelling a native file request interrupts its pending root model review", async () => {
+  const previous = process.env.PI_SANDBOX_CONTAINER;
+  process.env.PI_SANDBOX_CONTAINER = "1";
+  const cancel = new AbortController();
+  let observedAbort = false;
+  const instance = harness(async (signal) => {
+    const aborted = new Promise<void>(resolve => signal.addEventListener("abort", () => {
+      observedAbort = true;
+      resolve();
+    }, { once: true }));
+    cancel.abort();
+    await aborted;
+    return allow;
+  }, { rpcUi: true, config: config({ interactionMode: "interactive", retainedContext: true, reviewerConversation: true }) });
+  try {
+    const result = await instance.authorize("external_directory_read", {
+      forwarding: { requesterSessionId: "worker-file", requesterAgentName: "worker" },
+      [Symbol.for("pi-auto-review:forwarded-cwd")]: "/workspace/worker",
+      [Symbol.for("pi-auto-review:forwarded-signal")]: cancel.signal,
+    });
+    assert.equal(result.decision.approved, false);
+    assert.equal(result.terminalCalls, 0);
+    assert.equal(observedAbort, true);
+  } finally {
+    await instance.dispose();
+    if (previous === undefined) delete process.env.PI_SANDBOX_CONTAINER;
+    else process.env.PI_SANDBOX_CONTAINER = previous;
+  }
+});

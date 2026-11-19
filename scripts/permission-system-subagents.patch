@@ -303,6 +303,16 @@
        const reason = "The request was cancelled. No permission was granted.";
        return {
          approved: false, state: "denied", confirmationUnavailable: true,
+@@ -236,7 +237,8 @@
+     (tui, theme, keybindings, done) => {
+       // The host's `done` is idempotent, so a human answer racing the abort
+       // settles whichever arrives first.
+-      clock?.signal?.addEventListener(
++      if (clock?.signal?.aborted) done(undefined);
++      else clock?.signal?.addEventListener(
+         "abort",
+         () => {
+           done(undefined);
 --- a/node_modules/@gotgenes/pi-permission-system/src/authority/subagent-registry.ts
 +++ b/node_modules/@gotgenes/pi-permission-system/src/authority/subagent-registry.ts
 @@ -60,6 +60,9 @@

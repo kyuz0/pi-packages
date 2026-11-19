@@ -53,7 +53,16 @@ try {
   assert.equal(target("unavailable"), null);
   const missing = selectAuthorizer({ hasUI: false, sessionManager: { getSessionId: () => "unavailable" } }, { registry });
   assert.equal(missing.adjudicatesLocally, false);
-  await verifyFileExchange();
+  // A running Pi root keeps its inbox poller alive. The isolated harness drains
+  // it directly, so retain a deadline while awaiting its unref'ed cancellation poll.
+  let deadline;
+  try {
+    await Promise.race([verifyFileExchange(), new Promise((_, reject) => {
+      deadline = setTimeout(() => reject(new Error("Managed file exchange did not finish")), 15_000);
+    })]);
+  } finally {
+    clearTimeout(deadline);
+  }
   console.log("Managed native routing, file exchange, branch invalidation and cancellation passed.");
 } finally {
   delete globalThis[Symbol.for("pi-subagents:approval-child-sessions")];

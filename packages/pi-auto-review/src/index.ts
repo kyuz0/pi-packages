@@ -857,7 +857,8 @@ export function createPiAutoReviewExtension(
           });
           const result = reviewResults.get(request.id);
           reviewResults.delete(request.id);
-          if (shuttingDown || requestEpoch !== registrationEpoch || context !== reviewContext) return {
+          if (shuttingDown || requestEpoch !== registrationEpoch || context !== reviewContext ||
+              (delegated && !isCurrent?.())) return {
             kind: "deny", reason: "The session changed during review. Review this action again in the current session; no permission was granted.",
           };
           const rationale = result?.summary.controllerFailure ?? decision.review.rationale;
