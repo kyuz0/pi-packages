@@ -14,6 +14,8 @@ export default function childPolicy(pi: ExtensionAPI) {
     ...(inner && selected.approval !== 'off' ? ['/opt/pi-security/packages/pi-reviewed-escalation/index.ts'] : []),
     ...(inner ? ['/opt/pi-security/packages/pi-sandbox/src/index.ts'] : []),
     ...(selected.compaction_recall !== 'off' ? ['/opt/pi-compaction-recall/node_modules/pi-compaction-recall/src/index.ts'] : []),
+    ...(selected.web_access?.enabled ? ['/opt/pi-web-access/extension.mjs'] : []),
+    ...(selected.browser ? ['/opt/betterwright/extension.mjs'] : []),
     '/opt/pi-security/packages/pi-sandbox/src/container-child-policy.ts',
   ];
   let registration: ReturnType<typeof registerRequiredChildExtensions> | undefined;
