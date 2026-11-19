@@ -3,7 +3,8 @@ import { createBashToolDefinition, createLocalBashOperations, SettingsManager } 
 import { getBoundaryBroker } from "@erichll/pi-auto-review/broker";
 import { Type } from "typebox";
 import { approveEscalation, type EscalationInput } from "./approval.ts";
-import { managedChild, requestChildApproval, runManagedApprovalDialog, serveChildApprovals } from "@erichll/pi-auto-review/managed-child";
+import { managedChild, requestChildApproval, serveChildApprovals } from "@erichll/pi-auto-review/managed-child";
+import { runManagedApprovalDialog } from "./dialog-admission.ts";
 import { realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative } from "node:path";
 import { fileURLToPath } from "node:url";
