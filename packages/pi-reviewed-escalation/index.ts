@@ -3,7 +3,7 @@ import { createBashToolDefinition, createLocalBashOperations, SettingsManager } 
 import { getBoundaryBroker } from "@erichll/pi-auto-review/broker";
 import { Type } from "typebox";
 import { approveEscalation, type EscalationInput } from "./approval.ts";
-import { managedChild, requestChildApproval, serveChildApprovals } from "@erichll/pi-auto-review/managed-child";
+import { managedChild, requestChildApproval, runManagedApprovalDialog, serveChildApprovals } from "@erichll/pi-auto-review/managed-child";
 import { realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,7 +30,7 @@ export default function reviewedEscalation(pi: ExtensionAPI): void {
         const promptSignal = confirmation?.signal
           ? AbortSignal.any(signal ? [signal, confirmation.signal] : [confirmation.signal])
           : signal;
-        const answer = uiQueue.then(async () => {
+        const present = async () => {
           if (!stillCurrent() || promptSignal?.aborted) return false;
           const title = input.endpoint ? `Allow this connection to ${request.destination}?`
             : container ? "Run this exact command outside the inner sandbox?"
@@ -64,7 +64,9 @@ export default function reviewedEscalation(pi: ExtensionAPI): void {
           if (!confirmation?.critical) return true;
           return await ctx.ui.input("The reviewer rated this command critical. Type APPROVE to run it once.",
             undefined, { signal: promptSignal }) === "APPROVE" && stillCurrent();
-        });
+        };
+        if (container && process.env.SANDBOX_SUBAGENTS === "1") return runManagedApprovalDialog(input.sessionId, present);
+        const answer = uiQueue.then(present);
         uiQueue = answer.then(() => {}, () => {});
         return answer;
       } : undefined,

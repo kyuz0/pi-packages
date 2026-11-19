@@ -344,3 +344,32 @@
 +    return this.get(sessionId) !== undefined;
    }
  }
+--- a/node_modules/@gotgenes/pi-permission-system/src/authority/ask-dialog-queue.ts
++++ b/node_modules/@gotgenes/pi-permission-system/src/authority/ask-dialog-queue.ts
+@@ -45,6 +45,13 @@
+  * between them and a released ask reads as its terminal entry.
+  */
+ export class AskDialogQueue implements AskDialogAdmission, AskDialogRelease {
++  /** Admit managed boundary confirmations alongside this node's native asks. */
++  exposeManagedAdmission(service: object): void {
++    Object.defineProperty(service, Symbol.for("pi-auto-review:admit-managed-dialog"), {
++      value: (present: () => Promise<boolean>) => this.run(present, () => false),
++    });
++  }
++
+   /** Settles once every ask admitted so far has been presented or released. */
+   private tail: Promise<void> = Promise.resolve();
+   /**
+--- a/node_modules/@gotgenes/pi-permission-system/src/index.ts
++++ b/node_modules/@gotgenes/pi-permission-system/src/index.ts
+@@ -271,6 +271,10 @@
+     ),
+   );
+
++  if (process.env.PI_SANDBOX_CONTAINER === "1" && process.env.SANDBOX_SUBAGENTS === "1") {
++    askDialogQueue.exposeManagedAdmission(permissionsService);
++  }
++
+   // Subscribe to @gotgenes/pi-subagents' child lifecycle events so child
+   // sessions register/unregister without the core calling us (ADR 0002), and
+   // so a child that bound its extensions without loading one of ours is

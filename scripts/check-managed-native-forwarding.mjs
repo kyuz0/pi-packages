@@ -15,6 +15,9 @@ const { SubagentSessionRegistry } = await load("subagent-registry");
 const { resolvePermissionForwardingTarget } = await load("permission-forwarding");
 const { ForwardingLivenessJudge } = await load("forwarding-liveness");
 const { selectAuthorizer } = await load("authorizer");
+const { AskDialogQueue } = await load("ask-dialog-queue");
+const { PermissionServiceLifecycle } = await loader.import(resolve(directory, "src/service/service-lifecycle.ts"));
+const { runManagedApprovalDialog } = await loader.import(fileURLToPath(new URL("../packages/pi-auto-review/src/managed-child.ts", import.meta.url)));
 const { ParentAuthorizer } = await load("approval-escalator");
 const { ForwardedRequestServer } = await load("forwarded-request-server");
 const registry = new SubagentSessionRegistry();
@@ -53,6 +56,7 @@ try {
   assert.equal(target("unavailable"), null);
   const missing = selectAuthorizer({ hasUI: false, sessionManager: { getSessionId: () => "unavailable" } }, { registry });
   assert.equal(missing.adjudicatesLocally, false);
+  await verifyDialogAdmission();
   // A running Pi root keeps its inbox poller alive. The isolated harness drains
   // it directly, so retain a deadline while awaiting its unref'ed cancellation poll.
   let deadline;
@@ -63,7 +67,7 @@ try {
   } finally {
     clearTimeout(deadline);
   }
-  console.log("Managed native routing, file exchange, branch invalidation and cancellation passed.");
+  console.log("Managed native routing, shared dialog admission, file exchange, branch invalidation and cancellation passed.");
 } finally {
   delete globalThis[Symbol.for("pi-subagents:approval-child-sessions")];
 }
@@ -115,4 +119,51 @@ async function verifyFileExchange() {
     delete globalThis[Symbol.for("pi-subagents:native-approval-generations")];
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+async function verifyDialogAdmission() {
+  const id = "mixed-admission";
+  const queue = new AskDialogQueue();
+  const service = {};
+  queue.exposeManagedAdmission(service);
+  const lifecycle = new PermissionServiceLifecycle(service, { adjudicatesLocally: () => true }, { emit() {} }, []);
+  const unavailable = () => assert.fail("unavailable approval queue displayed a dialog");
+  assert.equal(await runManagedApprovalDialog(id, unavailable), false);
+  lifecycle.activate({ sessionManager: { getSessionId: () => id } });
+  const events = [];
+  const nativeChoice = Promise.withResolvers();
+  const typedConfirmation = Promise.withResolvers();
+  const bashDisplayed = Promise.withResolvers();
+  const native = queue.run(async () => {
+    events.push("native displayed");
+    return nativeChoice.promise;
+  }, () => false);
+  const bash = runManagedApprovalDialog(id, async () => {
+    events.push("bash displayed");
+    bashDisplayed.resolve();
+    await typedConfirmation.promise;
+    events.push("bash confirmed");
+    return true;
+  });
+  const nextNative = queue.run(async () => { events.push("next native displayed"); return false; }, () => false);
+  await new Promise(setImmediate);
+  assert.deepEqual(events, ["native displayed"]);
+  assert.equal(await runManagedApprovalDialog("other-session", unavailable), false);
+  nativeChoice.resolve(false);
+  await bashDisplayed.promise;
+  assert.deepEqual(events, ["native displayed", "bash displayed"]);
+  typedConfirmation.resolve();
+  assert.deepEqual(await Promise.all([native, bash, nextNative]), [false, true, false]);
+  assert.deepEqual(events, ["native displayed", "bash displayed", "bash confirmed", "next native displayed"]);
+
+  const visible = Promise.withResolvers();
+  const userResponse = Promise.withResolvers();
+  const inFlight = queue.run(async () => { visible.resolve(); return userResponse.promise; }, () => false);
+  await visible.promise;
+  const queued = runManagedApprovalDialog(id, unavailable);
+  queue.releaseAll("Session ended");
+  lifecycle.teardown();
+  assert.deepEqual(await Promise.all([inFlight, queued]), [false, false]);
+  assert.equal(await runManagedApprovalDialog(id, unavailable), false);
+  userResponse.resolve(true);
 }

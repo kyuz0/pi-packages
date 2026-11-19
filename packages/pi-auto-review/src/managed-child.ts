@@ -1,3 +1,4 @@
+import { getPermissionsService } from "@gotgenes/pi-permission-system";
 import { randomBytes } from "node:crypto";
 import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { createServer, request } from "node:http";
@@ -37,6 +38,13 @@ type Forwarded = Omit<ManagedInput, "sessionId" | "turn"> & {
 };
 
 const shared = globalThis as Record<symbol, unknown>;
+
+/** Share the live root permission queue with native file dialogs in both clients. */
+export function runManagedApprovalDialog(sessionId: string, present: () => Promise<boolean>): Promise<boolean> {
+  const service = getPermissionsService(sessionId);
+  const admit = service && Object.getOwnPropertyDescriptor(service, Symbol.for("pi-auto-review:admit-managed-dialog"))?.value;
+  return typeof admit === "function" ? admit(present) : Promise.resolve(false);
+}
 
 export function managedChild(sessionId: string): Child | undefined {
   return (shared[CHILDREN] as Map<string, Child> | undefined)?.get(sessionId);
