@@ -79,7 +79,7 @@ replace('@gotgenes/pi-permission-system/src/config/config-loader.ts',
 # assisted mode may ask for one-time consent to a valid reviewer verdict.
 for patch in ('permission-system-review.patch', 'permission-system-copy.patch',
               'pi-subagents-approval-origin.patch', 'pi-subagents-display-names.patch',
-              'pi-subagents-parent-wake.patch', 'permission-system-subagents.patch'):
+              'pi-subagents-parent-wake.patch', 'pi-subagents-stop-rpc.patch', 'permission-system-subagents.patch'):
     subprocess.run(['git', 'apply', str(root / 'scripts' / patch)], cwd=root, check=True)
 replace('@anthropic-ai/sandbox-runtime/dist/sandbox/linux-sandbox-utils.js',
         "bwrapArgs.push('--dev', '/dev');",

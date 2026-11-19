@@ -1,0 +1,138 @@
+--- a/node_modules/pi-subagents/src/slash/slash-commands.js
++++ b/node_modules/pi-subagents/src/slash/slash-commands.js
+@@ -8,6 +8,7 @@
+ import { resolveExistingReadPaths } from "../shared/settings.js";
+ import { DEFAULT_PROVIDER_MODELS_MAX_AGE_DAYS, applySubagentProfile, checkSubagentProfile, generateProfilesForProvider, listSubagentProfiles, readSubagentProfile, refreshProviderModelCatalog, } from "../profiles/profiles.js";
+ import { findModelInfo, toModelInfo } from "../shared/model-info.js";
++import { safeTerminalText } from "../shared/display-text.js";
+ import { shortenPath } from "../shared/formatters.js";
+ import { canRenderComponents } from "../shared/extension-context.js";
+ import { listAsyncRuns, formatAsyncRunProgressLabel } from "../runs/background/async-status.js";
+@@ -144,6 +145,7 @@
+     return {
+         kind: "async",
+         id: run.id,
++        name: safeTerminalText((run.mode === "single" && (run.steps[0]?.label || run.steps[0]?.agent)) || run.workflowKey || run.mode),
+         label: `${run.id} · ${run.mode} · ${progress}`,
+         detail: `${run.state} · ${cwd}`,
+         actionLabel: "stop async run",
+@@ -166,13 +168,12 @@
+         return [];
+     }
+ }
+-function discoverStopTargets(ctx, state) {
++function discoverStopTargets(ctx, state, workersOnly) {
+     const sessionId = state.currentSessionId ?? ctx.sessionManager.getSessionId() ?? undefined;
+-    const asyncTargets = listAsyncRuns(DIRS.async, {
+-        states: ["queued", "running"],
+-        ...(sessionId ? { sessionId } : {}),
+-    }).map(formatAsyncStopTarget);
+-    return [...asyncTargets, ...scheduledStopTargets(ctx, state)];
++    const asyncTargets = sessionId ? listAsyncRuns(DIRS.async, {
++        states: ["queued", "running"], sessionId,
++    }).map(formatAsyncStopTarget) : [];
++    return workersOnly ? asyncTargets : [...asyncTargets, ...scheduledStopTargets(ctx, state)];
+ }
+ function stopFallbackText(targets) {
+     if (targets.length === 0)
+@@ -192,6 +193,40 @@
+     if (ids.length < 2)
+         return targets;
+     return [{ kind: "all", ids, label: `${ids.length} async runs`, detail: ids.join(", "), actionLabel: "stop all" }, ...targets];
++}
++function rpcStopChoices(targets) {
++    const labels = targets.map(target => target.kind === "all"
++        ? `Stop all ${target.ids.length} background workers`
++        : target.kind === "scheduled" ? `Pause schedule · ${target.label}` : target.name);
++    const used = new Set(labels);
++    const counts = new Map();
++    for (const label of labels)
++        counts.set(label, (counts.get(label) ?? 0) + 1);
++    return targets.map((target, index) => {
++        const name = labels[index];
++        if (target.kind !== "async" || counts.get(name) === 1)
++            return name;
++        const suffix = target.id.slice(0, 8);
++        let label = `${name} (${suffix})`;
++        for (let n = 2; used.has(label); n++)
++            label = `${name} (${suffix}-${n})`;
++        used.add(label);
++        return label;
++    });
++}
++async function selectRpcStopTarget(ctx, targets) {
++    const choices = rpcStopChoices(targets);
++    const selected = await ctx.ui.select("Choose workers to stop", choices);
++    const index = choices.indexOf(selected);
++    if (index < 0)
++        return;
++    const target = targets[index];
++    let detail = target.kind === "all" ? `Stop these ${target.ids.length} background workers in this session?`
++        : target.kind === "scheduled" ? `Pause schedule ${target.id}?` : `Stop ${choices[index]} in this session?`;
++    if (target.kind !== "scheduled" && !ctx.isIdle())
++        detail += " The parent turn will keep running.";
++    if (await ctx.ui.confirm(choices[index], detail))
++        return { confirmed: true, target };
+ }
+ function selectForegroundDetachControl(state, requested) {
+     const controls = [...state.foregroundControls.values()];
+@@ -741,9 +776,9 @@
+             handler: async (ctx) => detachForegroundRun("", ctx),
+         });
+     }
+-    pi.registerCommand("subagents-stop", {
++    const stopCommand = {
+         description: "Stop a current-session async subagent run, or one child of it with /subagents-stop <run-id> <child-id>",
+-        handler: async (args, ctx) => {
++        handler: async (args, ctx, workersOnly = false) => {
+             const [id, childId, ...extra] = args.trim().split(/\s+/).filter(Boolean);
+             if (extra.length > 0) {
+                 sendSlashText(pi, "Usage: /subagents-stop [run-id] [child-id]");
+@@ -755,22 +790,26 @@
+             }
+             let targets;
+             try {
+-                targets = discoverStopTargets(ctx, state);
++                targets = discoverStopTargets(ctx, state, workersOnly);
+             }
+             catch (error) {
+                 const message = error instanceof Error ? error.message : String(error);
+                 ctx.ui.notify(message, "error");
+                 return;
+             }
+-            if (!canRenderComponents(ctx)) {
++            const componentUi = canRenderComponents(ctx);
++            if (!componentUi && !(ctx.mode === "rpc" && ctx.hasUI)) {
+                 sendSlashText(pi, stopFallbackText(targets));
+                 return;
+             }
+             if (targets.length === 0) {
+-                ctx.ui.notify("No active current-session async runs or scheduled subagent runs to stop.", "info");
+-                return;
+-            }
+-            const result = await ctx.ui.custom((tui, theme, _kb, done) => new SubagentsStopSelector(tui, theme, stopPickerTargets(targets), done), { overlay: true, overlayOptions: { anchor: "center", width: 88, maxHeight: "80%" } });
++                ctx.ui.notify(workersOnly ? "No background workers are running in this session." : "No active current-session async runs or scheduled subagent runs to stop.", "info");
++                return;
++            }
++            const choices = stopPickerTargets(targets);
++            const result = componentUi
++                ? await ctx.ui.custom((tui, theme, _kb, done) => new SubagentsStopSelector(tui, theme, choices, done), { overlay: true, overlayOptions: { anchor: "center", width: 88, maxHeight: "80%" } })
++                : await selectRpcStopTarget(ctx, choices);
+             if (!result?.confirmed || !result.target)
+                 return;
+             if (result.target.kind === "all") {
+@@ -783,6 +822,14 @@
+                 return;
+             }
+             await runCommand(ctx, { action: "stop", id: result.target.id });
++        },
++    };
++    pi.registerCommand("subagents-stop", stopCommand);
++    pi.registerCommand("subagents-stop-picker-rpc", {
++        description: "Open the stop workers picker in an RPC client",
++        handler: async (args, ctx) => {
++            if (ctx.mode === "rpc" && !args.trim())
++                await stopCommand.handler("", ctx, true);
+         },
+     });
+     pi.registerCommand("subagents-steer", {
