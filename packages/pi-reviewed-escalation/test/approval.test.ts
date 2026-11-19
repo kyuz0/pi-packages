@@ -53,6 +53,22 @@ test("denial never asks a human to bypass it", async () => {
   assert.equal(result.allowed, false);
 });
 
+test("a delegated network request grants only the exact endpoint", async () => {
+  const broker = new BoundaryApprovalBroker({ reviewer: async (request, context) => {
+    assert.equal(request.surface, "network");
+    assert.equal(request.operation, "connect");
+    assert.equal(request.destination, "fixture.invalid:443");
+    assert.equal(request.destinationProtocol, "https");
+    assert.equal(request.command, input.command);
+    assert.equal(request.requesterSessionId, "child-a");
+    assert.equal(context?.delegated, true);
+    return { outcome: "allow", riskLevel: "low", userAuthorization: "high", rationale: "Authorized endpoint." };
+  } });
+  const result = await approveEscalation({ ...input, requesterSessionId: "child-a",
+    endpoint: { hostname: "fixture.invalid", port: 443, protocol: "https" } }, { broker });
+  assert.equal(result.approvedBy, "reviewer");
+});
+
 test("hard denial cannot be manually overridden", async () => {
   const broker = new BoundaryApprovalBroker({ reviewer: async () => { throw new Error("must not review"); }, hardDeny: () => ({ rule: "test-deny", reason: "Hard restriction." }) });
   assert.equal((await approveEscalation(input, { broker, confirm: async () => { throw new Error("must not prompt"); } })).allowed, false);

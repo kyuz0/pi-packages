@@ -152,6 +152,7 @@ function sandboxOperations(
         cwd,
         sessionId: currentSessionId,
         scopeKey: `${currentSessionId}:turn:${requestTurn}`,
+        turn: requestTurn,
         isCurrent: () => turnIndex() === requestTurn && sessionId(ctx) === currentSessionId,
         signal: options.signal,
         humanApproval: humanApproval(ctx),

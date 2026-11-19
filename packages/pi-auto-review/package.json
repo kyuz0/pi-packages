@@ -35,7 +35,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./broker": "./src/broker/index.ts",
-    "./sandbox": "./src/integrations/sandbox.ts"
+    "./sandbox": "./src/integrations/sandbox.ts",
+    "./managed-child": "./src/managed-child.ts"
   },
   "pi": {
     "extensions": [

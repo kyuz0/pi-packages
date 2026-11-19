@@ -1,0 +1,122 @@
+--- a/node_modules/pi-subagents/src/runs/shared/child-launch.js
++++ b/node_modules/pi-subagents/src/runs/shared/child-launch.js
+@@ -16,11 +16,27 @@
+ import { resolveRequiredChildExtensions } from "../../shared/required-child-extensions.js";
+ /** Environment variable pi-mcp-adapter reads for the tools a child may expose. */
+ export const MCP_DIRECT_TOOLS_ENV = "MCP_DIRECT_TOOLS";
+-export function inheritedChildRuntime(config) {
+-    if (!config)
+-        return undefined;
++function approvalOrigin(parentSessionId) {
++    return globalThis[Symbol.for("pi-subagents:approval-origins")]?.get(parentSessionId);
++}
++function nativeApprovalGeneration(parentSessionId) {
++    return globalThis[Symbol.for("pi-subagents:native-approval-generations")]?.get(parentSessionId);
++}
++export function inheritedChildRuntime(config, parentSessionId) {
++    if (!config) {
++        const origin = approvalOrigin(parentSessionId);
++        const generation = nativeApprovalGeneration(parentSessionId);
++        return parentSessionId ? {
++            rootSessionId: parentSessionId,
++            ...(origin ? { approvalOrigin: origin } : {}),
++            ...(generation ? { nativeApprovalGeneration: generation } : {}),
++        } : undefined;
++    }
+     return {
+         depth: config.depth,
++        ...(config.rootSessionId ? { rootSessionId: config.rootSessionId } : {}),
++        ...(config.approvalOrigin ? { approvalOrigin: config.approvalOrigin } : {}),
++        ...(config.nativeApprovalGeneration ? { nativeApprovalGeneration: config.nativeApprovalGeneration } : {}),
+         ...(config.maxDepth !== undefined ? { maxDepth: config.maxDepth } : {}),
+         ...(config.nestedRoute ? { nestedRoute: config.nestedRoute } : {}),
+         ...(config.nestedParent ? { nestedParent: config.nestedParent } : {}),
+@@ -141,7 +157,13 @@
+     let structuredCalled = false;
+     let structuredAcceptanceProvided = false;
+     const structuredTerminalState = { captured: false };
++    const rootSessionId = inherited?.rootSessionId ?? input.parentSessionId;
++    const origin = inherited ? inherited.approvalOrigin : approvalOrigin(input.parentSessionId);
++    const generation = inherited ? inherited.nativeApprovalGeneration : nativeApprovalGeneration(input.parentSessionId);
+     const config = {
++        ...(origin ? { approvalOrigin: origin } : {}),
++        ...(rootSessionId ? { rootSessionId } : {}),
++        ...(generation ? { nativeApprovalGeneration: generation } : {}),
+         cwd: input.cwd,
+         ...(input.runId ? { runId: input.runId } : {}),
+         agent: input.childAgentName,
+--- a/node_modules/pi-subagents/src/runs/background/async-execution.js
++++ b/node_modules/pi-subagents/src/runs/background/async-execution.js
+@@ -431,7 +431,9 @@
+         return { error: `Background children require the host npm package (${PI_CODING_AGENT_PACKAGE}) with its dependencies; ${piPackageRoot} does not provide ${hostPeerAliases.missing.join(", ")}.` };
+     }
+     fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
+-    const cfgPath = getAsyncConfigPath(suffix);
++    const cfgPath = cfg.inheritedChildRuntime?.approvalOrigin
++        ? path.join("/home/node/.pi/agent/managed-approvals", path.basename(getAsyncConfigPath(suffix)))
++        : getAsyncConfigPath(suffix);
+     const runnerProcessInstanceId = randomUUID();
+     const hasRevivalLease = typeof cfg.revivalLease === "object";
+     const launchBarrierToken = hasRevivalLease ? undefined : runnerProcessInstanceId;
+@@ -1361,7 +1363,7 @@
+             ...(capabilityCeiling ? { capabilityCeiling } : {}),
+             piPackageRoot,
+             childSessionFactoryModule: childSessionFactoryModule(),
+-            inheritedChildRuntime: inheritedChildRuntime(ctx.childRuntime),
++            inheritedChildRuntime: inheritedChildRuntime(ctx.childRuntime, launchParentSessionId),
+             projectTrusted: ctx.projectTrusted,
+             worktreeSetupHook,
+             worktreeSetupHookTimeoutMs,
+@@ -1984,7 +1986,7 @@
+             piPackageRoot,
+             childSessionFactoryModule: childSessionFactoryModule(),
+             projectTrusted: ctx.projectTrusted,
+-            inheritedChildRuntime: inheritedChildRuntime(ctx.childRuntime),
++            inheritedChildRuntime: inheritedChildRuntime(ctx.childRuntime, launchParentSessionId),
+             worktreeSetupHook,
+             worktreeSetupHookTimeoutMs,
+             worktreeBaseDir,
+--- a/node_modules/pi-subagents/src/runs/shared/child-session.js
++++ b/node_modules/pi-subagents/src/runs/shared/child-session.js
+@@ -367,6 +367,8 @@
+                 ...(launch.systemPrompt !== undefined ? { systemPrompt: launch.systemPrompt } : {}),
+                 ...(launch.appendSystemPrompt !== undefined ? { appendSystemPrompt: [launch.appendSystemPrompt] } : {}),
+             });
++            const childKey = Symbol.for("pi-subagents:approval-child-sessions");
++            const children = globalThis[childKey] ??= new Map();
+             // pi's own hosts emit `session_shutdown` before disposing a session so the
+             // extensions loaded into it (ambient extensions included) release their
+             // watchers, servers, and timers. Do the same, then dispose.
+@@ -382,6 +384,7 @@
+                     launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error });
+                 }
+                 finally {
++                    children.delete(session.sessionId);
+                     session.dispose();
+                 }
+             };
+@@ -440,6 +443,16 @@
+                     settingsManager,
+                     sessionStartEvent: { type: "session_start", reason: "startup" },
+                 });
++                if (children.has(session.sessionId)) {
++                    session.dispose();
++                    throw new Error("The child session already has an active runtime.");
++                }
++                children.set(session.sessionId, Object.freeze({
++                    rootSessionId: launch.runtime?.rootSessionId,
++                    origin: launch.runtime?.approvalOrigin,
++                    nativeApprovalGeneration: launch.runtime?.nativeApprovalGeneration,
++                    agent: launch.runtime?.agent,
++                }));
+                 pinChildCacheRetention(session.agent);
+                 // Pi reports handler failures through onError instead of throwing, so required startup failures must be collected here.
+                 const requiredStartupErrors = [];
+@@ -455,6 +468,7 @@
+                     });
+                 }
+                 catch (error) {
++                    children.delete(session.sessionId);
+                     session.dispose();
+                     throw error;
+                 }

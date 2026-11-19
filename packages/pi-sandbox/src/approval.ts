@@ -3,6 +3,7 @@ import type {
   BoundaryRequest,
   ReviewerConfirmation,
 } from "@erichll/pi-auto-review/broker";
+import { managedChild, requestChildApproval } from "@erichll/pi-auto-review/managed-child";
 import { sandboxTrapToBoundaryRequest } from "@erichll/pi-auto-review/sandbox";
 import type { SandboxApprovalTrap } from "./traps.ts";
 import type { HostIPCTrigger } from "./host-ipc.ts";
@@ -26,6 +27,7 @@ export type TrapApprovalContext = {
   cwd: string;
   sessionId: string;
   scopeKey: string;
+  turn?: number;
   agentName?: string;
   signal?: AbortSignal;
   humanApproval?: HumanApproval;
@@ -48,6 +50,23 @@ export async function approveDomainEndpoint(
   endpoint: NetworkEndpoint,
   context: TrapApprovalContext,
 ): Promise<TrapApprovalResult> {
+  const child = process.env.PI_SANDBOX_CONTAINER === "1" ? managedChild(context.sessionId) : undefined;
+  if (child) {
+    const decision = await requestChildApproval(child, {
+      sessionId: context.sessionId,
+      command: context.command,
+      cwd: context.cwd,
+      turn: context.turn,
+      toolCallId: randomUUID(),
+      justification: "Allow a connection requested by the sandboxed command.",
+      endpoint,
+    }, context.signal);
+    if (context.signal?.aborted || (context.isCurrent && !context.isCurrent())) {
+      return { action: "deny", source: "unavailable", reason: "The delegated connection was cancelled." };
+    }
+    return decision.allowed ? { action: "allow", source: decision.approvedBy ?? "reviewer", reason: decision.rationale }
+      : { action: "deny", source: "reviewer", reason: decision.rationale };
+  }
   const request: BoundaryRequest = {
     id: `sandbox-runtime-network-${randomUUID()}`,
     source: "sandbox-runtime",

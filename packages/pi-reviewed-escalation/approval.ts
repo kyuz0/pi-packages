@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ManagedEndpoint } from "@erichll/pi-auto-review/managed-child";
 import type { BoundaryApprovalBrokerService, BoundaryRequest, ReviewerConfirmation } from "@erichll/pi-auto-review/broker";
 
 export type EscalationInput = {
@@ -9,6 +10,10 @@ export type EscalationInput = {
   sessionId: string;
   scopeKey: string;
   timeout?: number;
+  turn?: number;
+  endpoint?: ManagedEndpoint;
+  requesterSessionId?: string;
+  agentName?: string;
 };
 
 export type EscalationApproval = {
@@ -23,7 +28,8 @@ export async function approveEscalation(
     broker?: BoundaryApprovalBrokerService;
     signal?: AbortSignal;
     isCurrent?: () => boolean;
-    confirm?: (request: BoundaryRequest, rationale: string, confirmation?: ReviewerConfirmation) => Promise<boolean>;
+    confirm?: (request: BoundaryRequest, rationale: string, confirmation: ReviewerConfirmation | undefined,
+      isCurrent: () => boolean) => Promise<boolean>;
   },
 ): Promise<EscalationApproval> {
   if (options.signal?.aborted) return { allowed: false, rationale: "Escalation cancelled." };
@@ -33,22 +39,36 @@ export async function approveEscalation(
   const broker = options.broker;
   if (!broker) return { allowed: false, rationale: "The automatic approval broker is unavailable; host execution is disabled." };
   const request: BoundaryRequest = {
-    id: `pi-reviewed-escalation-${randomUUID()}`,
+    id: `pi-reviewed-${input.endpoint ? "network" : "escalation"}-${randomUUID()}`,
     source: "sandbox-runtime",
-    surface: "host-ipc",
-    operation: "execute-host",
-    toolName: "bash_escalate",
+    ...(input.endpoint ? {
+      surface: "network",
+      operation: "connect",
+      toolName: "bash",
+      destination: `${input.endpoint.hostname}:${input.endpoint.port}`,
+      destinationHost: input.endpoint.hostname,
+      destinationPort: input.endpoint.port,
+      destinationProtocol: input.endpoint.protocol,
+      matchedPolicy: { decision: "ask" as const, rule: "network-unmatched" },
+      toolInputPreview: "Allow one connection through the inner sandbox proxy. The outer container network policy still applies.",
+    } : {
+      surface: "host-ipc",
+      operation: "execute-host",
+      toolName: "bash_escalate",
+      matchedPolicy: { decision: "ask" as const, rule: "explicit-sandbox-escalation" },
+      toolInputPreview: JSON.stringify({
+        execution: process.env.PI_SANDBOX_CONTAINER === "1"
+          ? "This exact command runs inside the outer devcontainer, outside the inner OS sandbox, with the container user filesystem, credentials, network and sockets. It never runs on the physical host. Ordinary sandboxed Bash permission does not authorize this escalation."
+          : "This exact command will run on the host OUTSIDE the OS sandbox, with the user's filesystem, credentials, network and Unix-socket access. Permission for ordinary sandboxed Bash does not authorize this host execution.",
+        justification: input.justification,
+        timeoutSeconds: input.timeout ?? null,
+      }),
+    }),
     toolCallId: input.toolCallId,
     command: input.command,
     cwd: input.cwd,
-    matchedPolicy: { decision: "ask", rule: "explicit-sandbox-escalation" },
-    toolInputPreview: JSON.stringify({
-      execution: process.env.PI_SANDBOX_CONTAINER === "1"
-        ? "This exact command runs inside the outer devcontainer, outside the inner OS sandbox, with the container user filesystem, credentials, network and sockets. It never runs on the physical host. Ordinary sandboxed Bash permission does not authorize this escalation."
-        : "This exact command will run on the host OUTSIDE the OS sandbox, with the user's filesystem, credentials, network and Unix-socket access. Permission for ordinary sandboxed Bash does not authorize this host execution.",
-      justification: input.justification,
-      timeoutSeconds: input.timeout ?? null,
-    }),
+    requesterSessionId: input.requesterSessionId,
+    agentName: input.agentName,
   };
   const decision = await broker.review(request, {
     sessionId: input.sessionId,
@@ -56,6 +76,7 @@ export async function approveEscalation(
     isCurrent: options.isCurrent,
     signal: options.signal,
     issueGrant: true,
+    ...(input.requesterSessionId ? { delegated: true as const } : {}),
   });
   if (options.signal?.aborted) return { allowed: false, rationale: "Escalation cancelled." };
   if (decision.kind === "deny") {
@@ -64,14 +85,17 @@ export async function approveEscalation(
   }
   if (decision.kind === "defer") {
     const confirmation = decision.confirmation;
-    if (confirmation && !confirmation.isCurrent()) return { allowed: false, rationale: "The request changed. No permission was granted." };
-    const approved = options.confirm && await options.confirm(request, decision.review.rationale, confirmation);
-    if (options.signal?.aborted || !approved || (confirmation && !confirmation.isCurrent())) {
+    const isCurrent = () => !options.signal?.aborted && (options.isCurrent?.() ?? true) &&
+      (input.requesterSessionId ? decision.isCurrent?.() === true : true) &&
+      (confirmation?.isCurrent() ?? true);
+    if (!isCurrent()) return { allowed: false, rationale: "The request changed. No permission was granted." };
+    const approved = options.confirm && await options.confirm(request, decision.review.rationale, confirmation, isCurrent);
+    if (!approved || !isCurrent()) {
       return { allowed: false, rationale: decision.review.rationale };
     }
     return { allowed: true, rationale: decision.review.rationale, approvedBy: "human" };
   }
-  if (!decision.grant || !broker.consumeGrant(request, input.sessionId, decision.grant.token)) {
+  if (!(options.isCurrent?.() ?? true) || !decision.grant || !broker.consumeGrant(request, input.sessionId, decision.grant.token)) {
     return { allowed: false, rationale: "The exact one-shot escalation grant is missing, invalid, or expired." };
   }
   return { allowed: true, rationale: decision.review.rationale, approvedBy: "reviewer" };

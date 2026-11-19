@@ -1,8 +1,9 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createBashToolDefinition, createLocalBashOperations, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { getBoundaryBroker } from "@erichll/pi-auto-review/broker";
 import { Type } from "typebox";
-import { approveEscalation } from "./approval.ts";
+import { approveEscalation, type EscalationInput } from "./approval.ts";
+import { managedChild, requestChildApproval, serveChildApprovals } from "@erichll/pi-auto-review/managed-child";
 import { realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +18,87 @@ export default function reviewedEscalation(pi: ExtensionAPI): void {
   const mode = container ? process.env.SANDBOX_APPROVAL_MODE : undefined;
   let turn = 0;
   pi.on("turn_start", async () => { turn += 1; });
+  let dispose: (() => void) | undefined;
+  let ownerGeneration = 0;
+  let uiQueue = Promise.resolve();
+  function decide(input: EscalationInput, ctx: ExtensionContext, isCurrent: () => boolean, signal?: AbortSignal) {
+    return approveEscalation(input, {
+      broker: getBoundaryBroker(),
+      signal,
+      isCurrent,
+      confirm: ctx.hasUI ? (request, rationale, confirmation, stillCurrent) => {
+        const promptSignal = confirmation?.signal
+          ? AbortSignal.any(signal ? [signal, confirmation.signal] : [confirmation.signal])
+          : signal;
+        const answer = uiQueue.then(async () => {
+          if (!stillCurrent() || promptSignal?.aborted) return false;
+          const title = input.endpoint ? `Allow this connection to ${request.destination}?`
+            : container ? "Run this exact command outside the inner sandbox?"
+              : "Run this exact command outside the sandbox?";
+          const sections = [title, `Working directory: ${request.cwd}`];
+          if (input.requesterSessionId) {
+            sections.push(`Subagent: ${input.agentName || "worker"} (${input.requesterSessionId.slice(0, 8)})`);
+          }
+          if (confirmation) {
+            const verdict = confirmation.outcome === "deny"
+              ? "The reviewer rejected this command."
+              : "The reviewer left the decision to you.";
+            sections.push(`${verdict}\n${rationale}`);
+          } else if (mode !== "manual") {
+            sections.push(`Reviewer\n${rationale}`);
+          }
+          sections.push(
+            `Command\n${request.command}`,
+            `Justification\n${input.justification}`,
+            input.endpoint
+              ? "Execution scope\nThe outer container network policy still applies."
+              : `Execution scope\nThis uses the ${boundary} filesystem, credentials, network and sockets.`,
+          );
+          const allow = input.endpoint ? "Allow this exact operation once" : "Allow this exact command once";
+          const choice = await ctx.ui.select(
+            sections.join("\n\n"),
+            [allow, "Deny"],
+            { signal: promptSignal },
+          );
+          if (choice !== allow || !stillCurrent() || promptSignal?.aborted) return false;
+          if (!confirmation?.critical) return true;
+          return await ctx.ui.input("The reviewer rated this command critical. Type APPROVE to run it once.",
+            undefined, { signal: promptSignal }) === "APPROVE" && stillCurrent();
+        });
+        uiQueue = answer.then(() => {}, () => {});
+        return answer;
+      } : undefined,
+    });
+  }
+
+  if (container && process.env.SANDBOX_SUBAGENTS === "1") {
+    function stopServing() {
+      ownerGeneration += 1;
+      dispose?.();
+      dispose = undefined;
+    }
+    async function restoreServing(ctx: ExtensionContext) {
+      stopServing();
+      const generation = ownerGeneration;
+      const sessionId = ctx.sessionManager.getSessionId();
+      if (managedChild(sessionId)) return;
+      const close = await serveChildApprovals(sessionId, (input, signal) => {
+        const agentName = input.agent?.replace(/[^a-zA-Z0-9_. -]/g, "").slice(0, 80);
+        return decide({
+          command: input.command, cwd: input.cwd, justification: input.justification, timeout: input.timeout, endpoint: input.endpoint,
+          toolCallId: input.toolCallId, requesterSessionId: input.childSessionId, agentName,
+          sessionId, scopeKey: `delegated:${input.childSessionId}:turn:${input.turn}`,
+        }, ctx, () => !signal.aborted && ownerGeneration === generation &&
+          ctx.sessionManager.getSessionId() === sessionId, signal);
+      });
+      if (ownerGeneration === generation) dispose = close;
+      else close();
+    }
+    pi.on("session_start", (_event, ctx) => restoreServing(ctx));
+    pi.on("session_tree", (_event, ctx) => restoreServing(ctx));
+    pi.on("session_shutdown", stopServing);
+  }
+
   pi.registerTool({
     name: "bash_escalate",
     label: `Bash escalation (reviewed ${boundary} execution)`,
@@ -41,43 +123,15 @@ export default function reviewedEscalation(pi: ExtensionAPI): void {
       }
       const sessionId = ctx.sessionManager.getSessionId();
       const requestTurn = turn;
-      const input = { command, justification, timeout, cwd, toolCallId: id, sessionId, scopeKey: `${sessionId}:turn:${requestTurn}` };
-      const decision = await approveEscalation(input, {
-        broker: getBoundaryBroker(),
-        signal,
-        isCurrent: () => !signal?.aborted && turn === requestTurn && ctx.sessionManager.getSessionId() === sessionId,
-        confirm: ctx.hasUI ? async (request, rationale, confirmation) => {
-          const title = container
-            ? "Run this exact command outside the inner sandbox?"
-            : "Run this exact command outside the sandbox?";
-          const sections = [title, `Working directory: ${request.cwd}`];
-          if (confirmation) {
-            const verdict = confirmation.outcome === "deny"
-              ? "The reviewer rejected this command."
-              : "The reviewer left the decision to you.";
-            sections.push(`${verdict}\n${rationale}`);
-          } else if (mode !== "manual") {
-            sections.push(`Reviewer\n${rationale}`);
-          }
-          sections.push(
-            `Command\n${request.command}`,
-            `Justification\n${justification}`,
-            `Execution scope\nThis uses the ${boundary} filesystem, credentials, network and sockets.`,
-          );
-          const choice = await ctx.ui.select(
-            sections.join("\n\n"),
-            ["Allow this exact command once", "Deny"],
-            { signal },
-          );
-          if (choice !== "Allow this exact command once" || signal?.aborted) return false;
-          if (!confirmation?.critical) return true;
-          if (!confirmation.isCurrent()) return false;
-          return await ctx.ui.input("The reviewer rated this command critical. Type APPROVE to run it once.", undefined, { signal }) === "APPROVE";
-        } : undefined,
-      });
+      const input = { command, justification, timeout, cwd, toolCallId: id, sessionId, turn: requestTurn, scopeKey: `${sessionId}:turn:${requestTurn}` };
+      const isCurrent = () => !signal?.aborted && turn === requestTurn && ctx.sessionManager.getSessionId() === sessionId;
+      const child = container ? managedChild(sessionId) : undefined;
+      const decision = child
+        ? await requestChildApproval(child, input, signal)
+        : await decide(input, ctx, isCurrent, signal);
       pi.appendEntry("pi-reviewed-escalation", { ...input, ...decision });
-      if (!decision.allowed || signal?.aborted) {
-        return { isError: true, content: [{ type: "text", text: `${boundary} execution denied: ${signal?.aborted ? "Escalation cancelled." : decision.rationale}` }], details: { escalated: false, ...decision } };
+      if (!decision.allowed || !isCurrent()) {
+        return { isError: true, content: [{ type: "text", text: `${boundary} execution denied: ${!isCurrent() ? "Escalation cancelled or the request changed." : decision.rationale}` }], details: { escalated: false, ...decision } };
       }
       const shellPath = SettingsManager.create(cwd).getShellPath();
       const tool = createBashToolDefinition(cwd, { operations: createLocalBashOperations({ shellPath }) });
