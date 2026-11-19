@@ -1,0 +1,238 @@
+--- a/node_modules/pi-subagents/src/extension/public-execution.js
++++ b/node_modules/pi-subagents/src/extension/public-execution.js
+@@ -192,6 +192,12 @@
+         if (typeof params.agent !== "string" || !params.agent.trim()) {
+             return { ok: false, error: "Structured single-child execution requires agent to be a non-empty string.", mode: "workflow" };
+         }
++        if (params.name !== undefined) {
++            if (typeof params.name !== "string" || params.name.length > 80 || !/^[\p{L}\p{N}][\p{L}\p{M}\p{N} ._’'()-]*$/u.test(params.name)) {
++                return { ok: false, error: "Use a child name of 1–80 characters starting with a letter or number. Names may include spaces, periods, parentheses, apostrophes, hyphens and underscores.", mode: "workflow" };
++            }
++            params = { ...params, name: params.name.trimEnd() };
++        }
+         if (params.task !== undefined && typeof params.task !== "string") {
+             return { ok: false, error: "Structured single-child task must be a string when provided.", mode: "workflow" };
+         }
+--- a/node_modules/pi-subagents/src/extension/schemas.js
++++ b/node_modules/pi-subagents/src/extension/schemas.js
+@@ -143,7 +143,7 @@
+         description: "Management/control only; omit for execution. validate accepts workflow: true or a script path. Discover actions with {action:\"guide\",options:{topic:\"tool-reference\"}}."
+     })),
+     capabilities: Type.Optional(Type.Boolean({ description: "list: compact capability rows/details without system prompts." })),
+-    name: Type.Optional(Type.String({ description: "schedule.create name." })),
++    name: Type.Optional(Type.String({ description: "Display name for one child (1–80 characters), or the schedule.create name." })),
+     id: Type.Optional(Type.String({
+         description: "Run id/prefix for status/control."
+     })),
+@@ -265,6 +265,7 @@
+ /** Values the model passes in `options`, checked with the same property schemas as flat callers. */
+ export const SubagentOptionParams = Type.Object(SubagentOptionProperties, { additionalProperties: false });
+ const ModelTopLevelProperties = {
++    name: ModelProperties.name,
+     agent, task, workflow, args, async, model, cwd, worktree, output, action, id, message,
+     options: Type.Optional(Type.Unsafe({ type: "object", additionalProperties: true, description: "Every field not listed here, such as acceptance, timeoutMs, context, view and index; guide tool-reference/parameter-reference." })),
+ };
+--- a/node_modules/pi-subagents/src/runs/background/async-execution.js
++++ b/node_modules/pi-subagents/src/runs/background/async-execution.js
+@@ -1912,6 +1912,7 @@
+                     permissionRules,
+                     ...(capabilityCeiling ? { capabilityCeiling } : {}),
+                     agent,
++                    ...(params.displayName ? { displayName: params.displayName, label: params.displayName, sessionName: params.displayName } : {}),
+                     task: taskText,
+                     ...(agentConfig.runner ? { runner: agentConfig.runner } : {}),
+                     ...(singleClaudeCodeOverride ? { claudeCodeOverrideArgs: singleClaudeCodeOverride.args } : {}),
+@@ -2032,7 +2033,7 @@
+             chainStepCount: 1,
+             ...(lane ? { lane } : {}),
+             ...(launcher ? { launcher } : {}),
+-            steps: [{ agent, status: "pending", ...(lane ? { lane } : {}), ...(model ? { model } : {}), ...(contextLimit !== undefined ? { contextLimit } : {}) }],
++            steps: [{ agent, ...(params.displayName ? { label: params.displayName, sessionName: params.displayName } : {}), status: "pending", ...(lane ? { lane } : {}), ...(model ? { model } : {}), ...(contextLimit !== undefined ? { contextLimit } : {}) }],
+         }, path.join(asyncDir, "status.json"), launchParentSessionId, (proof) => emitProcessTerminalEvent(ctx, proof), (runnerProcessInstanceId) => params.activeAsyncCapacity?.markStarted(runnerProcessInstanceId), params.requestedCwd ?? runnerCwd);
+     }
+     catch (error) {
+@@ -2102,6 +2103,7 @@
+                 mode: "single",
+                 ...(params.toolCallId ? { toolCallId: params.toolCallId } : {}),
+                 agent,
++                ...(params.displayName ? { displayName: params.displayName } : {}),
+                 task: task?.trim() ? PROMPT_REDACTED : undefined,
+                 goal: (params.goal ?? task).trim() ? PROMPT_REDACTED : undefined,
+                 cwd: runnerCwd,
+@@ -2118,7 +2120,7 @@
+             });
+         }
+         return {
+-            content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${agent} [${id}]`, ctx.interactive === true) }],
++            content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${params.displayName ?? agent} [${id}]`, ctx.interactive === true) }],
+             details: { mode: "single", runId: id, ...(params.toolCallId ? { toolCallId: params.toolCallId } : {}), results: [], asyncId: id, asyncDir, launchContractDigest, launchResolvedExtensions, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.context ? { context: params.context } : {}), ...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}), ...(params.toolBudget ? { toolBudget: resolvedToolBudget.budget ?? params.toolBudget } : {}), ...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}) },
+         };
+     };
+--- a/node_modules/pi-subagents/src/runs/background/async-job-tracker.js
++++ b/node_modules/pi-subagents/src/runs/background/async-job-tracker.js
+@@ -779,6 +779,9 @@
+             ...(typeof info.completionOwnerId === "string" ? { completionOwnerId: info.completionOwnerId } : {}),
+             mode: info.mode ?? (info.chain ? "chain" : "single"),
+             description: info.goal ?? info.task,
++            ...(info.mode === "single" && info.agent && info.displayName ? {
++                steps: [{ agent: info.agent, label: info.displayName, sessionName: info.displayName, status: "pending" }],
++            } : {}),
+             agents,
+             chainStepCount: info.chainStepCount,
+             parallelGroups: validParallelGroups,
+--- a/node_modules/pi-subagents/src/runs/background/runner-child-launch.js
++++ b/node_modules/pi-subagents/src/runs/background/runner-child-launch.js
+@@ -43,6 +43,7 @@
+         intercomSessionName: ctx.childIntercomTarget,
+         projectTrusted: ctx.projectTrusted,
+         sessionName: attempt.sessionName,
++        displayName: step.displayName,
+         orchestratorIntercomTarget: ctx.orchestratorIntercomTarget,
+         runId: ctx.id,
+         childAgentName: step.agent,
+--- a/node_modules/pi-subagents/src/runs/foreground/execution.js
++++ b/node_modules/pi-subagents/src/runs/foreground/execution.js
+@@ -247,7 +247,7 @@
+     // Display name for the child session: applied inside the child through its
+     // runtime config and echoed back on the result payload so hosts can label
+     // this run without reading the child's session file.
+-    const childSessionName = deriveChildSessionName({ agent: agent.name, task: shared.originalTask ?? task });
++    const childSessionName = options.displayName ?? deriveChildSessionName({ agent: agent.name, task: shared.originalTask ?? task });
+     const watchdogConfig = resolveWatchdogConfig(options.cwd ?? runtimeCwd);
+     const childWatchdog = watchdogConfig.ok
+         ? resolveChildWatchdogConfig({
+@@ -290,6 +290,7 @@
+         intercomSessionName: options.intercomSessionName,
+         projectTrusted: options.projectTrusted,
+         sessionName: childSessionName,
++        displayName: options.displayName,
+         orchestratorIntercomTarget: options.orchestratorIntercomTarget,
+         runId: options.runId,
+         childAgentName: agent.name,
+@@ -344,6 +345,7 @@
+         index: options.index ?? 0,
+         agent: agent.name,
+         task: shared.originalTask ?? task,
++        ...(options.displayName ? { label: options.displayName } : {}),
+         ...(childSessionName ? { sessionName: childSessionName } : {}),
+         ...(options.agentContract ? { agentContract: options.agentContract } : {}),
+         launchContractDigest,
+@@ -1607,7 +1609,7 @@
+         ...options,
+         capabilityCeiling: intersectSubagentCapabilityCeilings(options.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(options.parentSessionId), options.childRuntime?.capabilityCeiling),
+     };
+-    const childSessionName = deriveChildSessionName({ agent: agentName, task });
++    const childSessionName = options.displayName ?? deriveChildSessionName({ agent: agentName, task });
+     const agent = agents.find((a) => a.name === agentName);
+     if (!agent) {
+         const diagnosticContext = options.unknownAgentDiagnosticContext
+--- a/node_modules/pi-subagents/src/runs/foreground/subagent-executor.js
++++ b/node_modules/pi-subagents/src/runs/foreground/subagent-executor.js
+@@ -3129,6 +3129,7 @@
+         const asyncResult = await executeAsyncSingle(id, compactOptional({
+             toolCallId: data.toolCallId,
+             agent: params.agent,
++            displayName: params.name,
+             task: shouldForkAgent(contextPolicy, params.agent) ? wrapForkTask(params.task ?? "") : (params.task ?? ""),
+             goal: params.task ?? "",
+             agentConfig: a,
+@@ -3772,6 +3773,7 @@
+             controlConfig,
+             onControlEvent,
+             intercomSessionName: childIntercomTarget,
++            displayName: params.name,
+             orchestratorIntercomTarget: childBridgeActive ? data.intercomBridge.orchestratorTarget : undefined,
+             nestedRoute: foregroundControl?.nestedRoute,
+             index: 0,
+@@ -7456,7 +7458,7 @@
+             if (workflowLaunchObserver) {
+                 const singleTask = hasTasks && effectiveParams.tasks?.length === 1 ? effectiveParams.tasks[0] : undefined;
+                 const singleSessionName = hasSingle
+-                    ? deriveChildSessionName({ agent: effectiveParams.agent, task: effectiveParams.task })
++                    ? effectiveParams.name ?? deriveChildSessionName({ agent: effectiveParams.agent, task: effectiveParams.task })
+                     : singleTask
+                         ? deriveChildSessionName({ agent: singleTask.agent, task: singleTask.task })
+                         : undefined;
+--- a/node_modules/pi-subagents/src/runs/shared/async-status-projection.js
++++ b/node_modules/pi-subagents/src/runs/shared/async-status-projection.js
+@@ -296,7 +296,9 @@
+     const node = {
+         id: publicText(job.asyncId, "async", ctx.caps.maxStringLength),
+         kind: kindForMode(job.mode),
+-        label: labelForAgents(job.agents, job.mode ?? "subagent", ctx.caps.maxStringLength),
++        label: (job.mode === "single" && job.steps?.length === 1
++            ? publicOptionalText(job.steps[0].label, ctx.caps.maxStringLength) : undefined)
++            ?? labelForAgents(job.agents, job.mode ?? "subagent", ctx.caps.maxStringLength),
+         state,
+         ...(startedAt !== undefined ? { startedAt } : {}),
+         ...(updatedAt !== undefined ? { updatedAt } : {}),
+--- a/node_modules/pi-subagents/src/runs/shared/child-launch.js
++++ b/node_modules/pi-subagents/src/runs/shared/child-launch.js
+@@ -158,6 +158,7 @@
+         agent: input.childAgentName,
+         childIndex: input.childIndex,
+         fanoutChild: fanout,
++        ...(input.displayName ? { displayName: input.displayName } : {}),
+         ...(input.sessionName?.trim() ? { sessionName: input.sessionName.trim() } : {}),
+         ...(input.intercomSessionName ? { intercomSessionName: input.intercomSessionName } : {}),
+         ...(input.orchestratorIntercomTarget ? { orchestratorTarget: input.orchestratorIntercomTarget } : {}),
+--- a/node_modules/pi-subagents/src/runs/shared/subagent-prompt-runtime.js
++++ b/node_modules/pi-subagents/src/runs/shared/subagent-prompt-runtime.js
+@@ -664,7 +664,10 @@
+         if (!event || typeof event !== "object" || !("systemPrompt" in event) || typeof event.systemPrompt !== "string")
+             return undefined;
+         registerNativeSupervisorClientOnce();
+-        const childSessionName = intercomIdClaimed ? config.sessionName || routingName : routingName || config.sessionName;
++        // The managed native supervisor stores its delivery target separately from the Pi session title.
++        const nativeDisplayName = process.env.PI_SANDBOX_CONTAINER === "1" && supervisorMetadata?.childTarget === routingName
++            ? config.displayName : undefined;
++        const childSessionName = nativeDisplayName || (intercomIdClaimed ? config.sessionName || routingName : routingName || config.sessionName);
+         if (childSessionName && typeof pi.setSessionName === "function") {
+             pi.setSessionName(childSessionName);
+         }
+--- a/node_modules/pi-subagents/src/tui/render.js
++++ b/node_modules/pi-subagents/src/tui/render.js
+@@ -496,7 +496,7 @@
+     const selectedStep = args.length === 0 ? laneStepForJob(job) : args[0];
+     const trace = laneTraceForJob(job);
+     const workspace = job.cwd ? boundedLaneValue(shortenPath(job.cwd)) : undefined;
+-    const label = compactTaskText(selectedStep?.description, selectedStep?.label)
++    const label = compactTaskText(selectedStep?.description, job.mode === "single" && selectedStep?.label === selectedStep?.sessionName ? undefined : selectedStep?.label)
+         ?? boundedLaneValue(trace?.label)
+         ?? (workspace ? undefined : boundedLaneValue(selectedStep?.workflowKey ?? job.workflowKey));
+     const role = boundedLaneValue(selectedStep?.agent ?? trace?.agent ?? job.agents?.[0] ?? widgetJobName(job), 32) ?? "subagent";
+@@ -629,7 +629,8 @@
+     return compactTaskText(result?.task) ?? compactTaskText(progress?.task) ?? agent ?? fallback;
+ }
+ function foregroundSingleDisplayName(result) {
+-    return normalizedParallelDisplayText(result?.agent)
++    return normalizedParallelDisplayText(result?.label)
++        ?? normalizedParallelDisplayText(result?.agent)
+         ?? normalizedParallelDisplayText(result?.sessionName)
+         ?? compactTaskText(result?.task)
+         ?? "subagent";
+@@ -1054,7 +1055,7 @@
+     if (job.mode === "chain")
+         return "chain";
+     if (job.mode === "single" && job.agents?.length === 1)
+-        return job.agents[0];
++        return normalizedParallelDisplayText(job.steps?.[0]?.label) ?? job.agents[0];
+     if (job.agents?.length)
+         return formatWidgetAgents(job.agents);
+     return job.mode ?? "subagent";
+@@ -1068,13 +1069,13 @@
+     return status === "complete" || status === "completed";
+ }
+ function singleChildAgentName(job, step) {
+-    return job.agents?.length === 1 ? job.agents[0] : step.agent || widgetJobName(job);
++    return normalizedParallelDisplayText(step.label) ?? (job.agents?.length === 1 ? job.agents[0] : step.agent || widgetJobName(job));
+ }
+ function hasSingleChildDetailEvidence(job, step) {
+     return Boolean(step.error?.trim()
+         || step.execution?.error?.trim()
+         || step.phase?.trim()
+-        || step.label?.trim()
++        || (step.label?.trim() && step.label !== step.sessionName)
+         || step.workflowKey?.trim()
+         || step.outputName?.trim()
+         || step.lane

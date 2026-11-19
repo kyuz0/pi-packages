@@ -77,7 +77,8 @@ replace('@gotgenes/pi-permission-system/src/config/config-loader.ts',
 # Keep reviewer refusals in the normal permission queue. Only the managed
 # assisted mode may ask for one-time consent to a valid reviewer verdict.
 for patch in ('permission-system-review.patch', 'permission-system-copy.patch',
-              'pi-subagents-approval-origin.patch', 'permission-system-subagents.patch'):
+              'pi-subagents-approval-origin.patch', 'pi-subagents-display-names.patch',
+              'permission-system-subagents.patch'):
     subprocess.run(['git', 'apply', str(root / 'scripts' / patch)], cwd=root, check=True)
 replace('@anthropic-ai/sandbox-runtime/dist/sandbox/linux-sandbox-utils.js',
         "bwrapArgs.push('--dev', '/dev');",
