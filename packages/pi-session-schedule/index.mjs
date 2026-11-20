@@ -63,7 +63,14 @@ export default function sessionSchedule(pi) {
   pi.registerMessageRenderer('scheduled_prompt', (message, _options, theme) =>
     new Text(theme.fg('accent', `Scheduled prompt: ${message.details?.jobName ?? 'prompt'}`), 0, 0));
 
-  const stop = () => { scheduler?.stop(); scheduler = undefined; storage = undefined; };
+  let publishTasks;
+  pi.events.on('cron:change', () => publishTasks?.());
+  const stop = () => {
+    publishTasks = undefined;
+    scheduler?.stop();
+    scheduler = undefined;
+    storage = undefined;
+  };
   pi.on('session_start', (_event, ctx) => {
     stop();
     storage = new SessionStorage(ctx.cwd, ctx.sessionManager.getSessionId());
@@ -72,6 +79,23 @@ export default function sessionSchedule(pi) {
     if (ignored.length) ctx.ui.notify(`${ignored.length} unsupported scheduled job(s) were left inactive. Recreate them as prompts bound to this chat.`, 'warning');
     scheduler = new CronScheduler(storage, pi, ctx);
     scheduler.start();
+    if (ctx.mode === 'rpc') {
+      publishTasks = () => {
+        const tasks = storage.getAllJobs().map(job => {
+          let state = job.enabled ? 'Pending' : 'Paused';
+          if (!job.enabled && job.type === 'once') {
+            if (job.lastStatus === 'success') state = 'Delivered';
+            if (job.lastStatus === 'error') state = 'Missed or failed';
+          }
+          const timing = job.type === 'interval' ? `Every ${job.schedule}`
+            : job.type === 'once' ? `Once at ${job.schedule}` : `Cron ${job.schedule}`;
+          const nextRun = job.enabled && job.type === 'cron' ? scheduler.getNextRun(job.id)?.toISOString() : undefined;
+          return { id: job.id, name: job.name, state, timing, nextRun };
+        });
+        ctx.ui.setWidget('psf-scheduled-tasks', [JSON.stringify({ version: 1, tasks })]);
+      };
+      publishTasks();
+    }
   });
   pi.on('session_shutdown', stop);
 

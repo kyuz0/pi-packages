@@ -19,3 +19,5 @@ The model-facing schema omits per-job models, extensions, skills and notificatio
 options. Runtime validation and filtered startup/fire-time reads enforce the same
 restriction for direct calls, persisted jobs and another chat in the same workspace.
 Installed extensions remain trusted code; the container is the OS boundary.
+
+RPC clients can display this session’s task names, IDs, timing and delivery state from the versioned `psf-scheduled-tasks` widget.

@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -7,16 +8,18 @@ import schedule, { SessionStorage } from '../index.mjs';
 import { CronStorage } from 'pi-schedule-prompt/dist/storage.js';
 
 function fixture(t) {
+  const events = new EventEmitter();
+  const widgets = [];
   const cwd = mkdtempSync(join(tmpdir(), 'pi-session-schedule-'));
   const handlers = {}, prompts = [], tools = {}, commands = {};
-  const ctx = { cwd, sessionManager: { getSessionId: () => 'session-a', getEntries: () => [] }, ui: { notify() {} } };
+  const ctx = { cwd, sessionManager: { getSessionId: () => 'session-a', getEntries: () => [] }, ui: { notify() {}, setWidget(key, lines) { widgets.push({ key, ...JSON.parse(lines[0]) }); } } };
   schedule({ registerTool: x => { tools[x.name] = x; }, registerCommand: (n,x) => { commands[n] = x; },
     registerMessageRenderer() {}, on: (n,f) => { handlers[n] = f; },
     sendMessage() {}, sendUserMessage: (prompt, options) => prompts.push({ prompt, options }),
-    events: { emit() {} },
+    events,
   });
   t.after(() => { handlers.session_shutdown(); rmSync(cwd, { recursive: true, force: true }); });
-  return { cwd, handlers, prompts, tools, commands, ctx,
+  return { cwd, widgets, handlers, prompts, tools, commands, ctx,
     call: params => tools.schedule_prompt.execute('test', params, undefined, undefined, ctx) };
 }
 
@@ -82,4 +85,29 @@ test('own job mutations preserve other sessions and reject changing ownership', 
   store.updateJob('mine', { enabled: false });
   store.removeJob('mine');
   assert.deepEqual(raw.getAllJobs(), [{ id: 'other', session: 'session-b' }]);
+});
+
+test('RPC schedule view follows delivery, mutation and session changes', async t => {
+  const f = fixture(t);
+  f.ctx.mode = 'rpc';
+  f.handlers.session_start({}, f.ctx);
+  const latest = () => f.widgets.at(-1).tasks;
+  assert.deepEqual(latest(), []);
+  const added = await f.call({ action: 'add', name: 'Tea', type: 'once', schedule: '+1s', prompt: 'private text' });
+  const jobId = added.details.jobId;
+  assert.equal(latest()[0].state, 'Pending');
+  await f.call({ action: 'disable', jobId });
+  assert.equal(latest()[0].state, 'Paused');
+  await f.call({ action: 'enable', jobId });
+  await new Promise(r => setTimeout(r, 1200));
+  assert.equal(latest()[0].state, 'Delivered');
+  assert.ok(!JSON.stringify(f.widgets).includes('private text'));
+  f.ctx.sessionManager.getSessionId = () => 'session-b';
+  f.handlers.session_start({}, f.ctx);
+  assert.deepEqual(latest(), []);
+  f.ctx.sessionManager.getSessionId = () => 'session-a';
+  f.handlers.session_start({}, f.ctx);
+  assert.equal(latest()[0].name, 'Tea');
+  await f.call({ action: 'remove', jobId });
+  assert.deepEqual(latest(), []);
 });
