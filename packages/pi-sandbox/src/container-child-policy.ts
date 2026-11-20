@@ -16,6 +16,7 @@ export default function childPolicy(pi: ExtensionAPI) {
     ...(selected.compaction_recall !== 'off' ? ['/opt/pi-compaction-recall/node_modules/pi-compaction-recall/src/index.ts'] : []),
     ...(selected.web_access?.enabled ? ['/opt/pi-web-access/extension.mjs'] : []),
     ...(selected.browser ? ['/opt/betterwright/extension.mjs'] : []),
+    ...(existsSync('/opt/sandbox/system-prompt.mjs') ? ['/opt/sandbox/system-prompt.mjs'] : []),
     '/opt/pi-security/packages/pi-sandbox/src/container-child-policy.ts',
   ];
   let registration: ReturnType<typeof registerRequiredChildExtensions> | undefined;
